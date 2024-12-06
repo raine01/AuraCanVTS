@@ -48,7 +48,7 @@ public static class AuraCanVTS {
 					break;
 				case CommandTypeEnum.createcommandset://创建指令(设置参数)
 				case CommandTypeEnum.createcommandpress://创建指令(热键)
-					VtsCreateCommand(parameters);
+					VtsCreateCommand(shortCommandStr, parameters);
 					break;
 				case CommandTypeEnum.deletecommand://删除指令
 					VtsDeleteCommand(parameters);
@@ -80,7 +80,7 @@ public static class AuraCanVTS {
 		Logger.SetLogger(0);// TODO 先直接传0,后续读持久变量
 	}
 
-	public static CommandTypeEnum CheckCommand(string commandStr, out string longCommandStr, out string shortCommandStr, out Dictionary<string, object> parameters)
+	private static CommandTypeEnum CheckCommand(string commandStr, out string longCommandStr, out string shortCommandStr, out Dictionary<string, object> parameters)
 	{
 		Match match;
 		parameters = new Dictionary<string, object>();
@@ -157,26 +157,30 @@ public static class AuraCanVTS {
 		match = Regex.Match(commandStr, @"^vts(?:\s+create\s+new\s+command\s+that)?\s+(press|set)\s+(.+)\s+when\s+(.+)$");
 		if(match.Success)
 		{
-			string condition = match.Groups[3].Value;
-			string prepareConditionStr = "";//格式化后的条件字符串(或未通过校验的原因)
-			if(!CheckCondition(condition, out prepareConditionStr))//校验条件语句
-			{
-				throw new Exception($"{pluginName} {prepareConditionStr}。");
-			}
-
-			Dictionary<string, string> typeAndCommand = new Dictionary<string, string>();//传入参数
+			//校验命令(顺便创建payload)
+			Dictionary<string, string> typeAndCommand = new Dictionary<string, string>();
 			typeAndCommand["type"] = match.Groups[1].Value;
 			typeAndCommand["command"] = match.Groups[2].Value;
-			if(!CheckCmd(typeAndCommand, out Dictionary<string, object> strAndPar))//校验命令
+			if(!CheckCmd(typeAndCommand, out Dictionary<string, object> strAndPar))
 			{
-				string cmdErrMsg = (string)strAndPar["strAndPar"];
+				string cmdErrMsg = (string)strAndPar["cmdErrMsg"];
 				throw new Exception($"{pluginName} {cmdErrMsg}。");
 			}
 			string longCmdStr = (string)strAndPar["longCmdStr"];
 			string shortCmdStr = (string)strAndPar["shortCmdStr"];
+			String payload = new Message((string)strAndPar["parameters"]).Serialize();
+
+			//校验条件(顺便创建executer和judges)
+			string condition = match.Groups[3].Value;//传入参数
+			if(!CheckCondition(condition, payload, out prepareConditionStr, out Judge[] judges))
+			{
+				throw new Exception($"{pluginName} {prepareConditionStr}。");
+			}
+			
 			longCommandStr = $"{longCmdStr} when {prepareConditionStr}";
 			shortCommandStr = $"{shortCmdStr} when {prepareConditionStr}";
 			parameters = (Dictionary<string, object>)strAndPar["parameters"];
+			parameters["judges"] = judges;
 			return CommandTypeEnum.createcommand;
 		}
 
@@ -230,7 +234,7 @@ public static class AuraCanVTS {
 			typeAndCommand["command"] = match.Groups[2].Value;
 			if(!CheckCmd(typeAndCommand, out Dictionary<string, object> strAndPar))//校验命令
 			{
-				string cmdErrMsg = (string)strAndPar["strAndPar"];
+				string cmdErrMsg = (string)strAndPar["cmdErrMsg"];
 				throw new Exception($"{pluginName} {cmdErrMsg}。");
 			}
 			longCommandStr = (string)strAndPar["longCmdStr"];
@@ -245,14 +249,20 @@ public static class AuraCanVTS {
 		return CommandTypeEnum.donothing;
 	}
 
-	private static void VtsCreateCommand(Dictionary<string, object> parameters)
+	private static void VtsCreateCommand(string shortCommandStr, Dictionary<string, object> parameters)
 	{
+		//创建command对象
+		Judge[] judges = (Judge[])parameters["judges"];
+		parameters.RemoveKey("judges");
+		Command command = new Command(parameters);
+		//获取序号
 		int newCommandKey = 0;
 		int[] commandKeys = _commands.Keys.ToArray();
 		if (commandKeys.Length > 0) {
 			newCommandKey = commandKeys.Max() + 1;
 		}
 		_commands.Add(newCommandKey, command);
+		//存入持久化变量
 		VariableDictionary dv = StaticHelpers.GetDictVariable(true, pluginName);
 		if(dv == null)
 		{
@@ -271,7 +281,7 @@ public static class AuraCanVTS {
 			_commands[commandIndex].Destroy();//不再让judge指向command
 			_commands.Remove(commandIndex);
 		}
-		//删_handles中的Judge
+		//删_handles中的Judge(从handle里面删judge的时候注意下，可能要删不止一次)
 		//通过commandIndex从_commands中拿到Command
 		//遍历Command中的judge数组,从数组的judge中拿到judgeKey(_key)
 		//从_commandDic中通过judgeKey拿到handleNo(可以仿照AddJudgeToHandles)
@@ -301,11 +311,47 @@ public static class AuraCanVTS {
 	}
 
 	//true表示没问题,out格式化后的;false表示有问题,out异常提示
-	private static bool CheckCondition(string conditionStr, out string prepareConditionStr)
+	private static bool CheckCondition(string conditionStr, string payload, out string prepareConditionStr, out Judge[] judges)
 	{
-		//得检查下有没有这个参数
-		//还得查查各式是否合理
-		prepareConditionStr = conditionStr;
+		// todo 得检查下有没有这个参数
+		// todo 还得查查各式是否合理
+		string[] parts = Regex.Split(conditionStr, @"\s+and\s+");
+		int partsLength = parts.Length;
+		//创建executer
+		Executer executer = new Executer(partsLength, payload);
+		//创建judges
+		judges = new Judge[partsLength];
+		for(int i=0; i<partsLength; i++)
+		{
+			Match match = Regex.Match(parts[i], @"^(?:(\w+)')?(\w+)([><=!]+)([\.\w]+)(%)?$");
+			
+			string name = match.Groups[1].Value;
+			string judgeKey = match.Groups[2].Value;
+			string sign = match.Groups[3].Value;
+			JudgeMethodEnum method;
+			object val;
+			//AuraCanVTS.Log($"2.{judgeKey} {sign}");
+			if(sign.Contains("="))
+			{
+				method = sign == "=" ? JudgeMethodEnum.eq : JudgeMethodEnum.ne;//=和!=
+				val = match.Groups[4].Value;
+			}
+			else
+			{
+				if(match.Groups.Count > 4)
+				{
+					method = match.Groups[3].Value == "<"? JudgeMethodEnum.ltp : JudgeMethodEnum.gtp;//<%和>%
+				}
+				else
+				{
+					method = match.Groups[3].Value == "<"? JudgeMethodEnum.lt : JudgeMethodEnum.gt;//<和>
+				}
+				val = double.Parse(match.Groups[4].Value);
+			}
+			Judge judge = new Judge(executer, i, judgeKey, method, val);
+			_handles
+			judges[i] = judge;
+		}
 		return true;
 	}
 
@@ -453,45 +499,14 @@ public static class AuraCanDictionary {
 public class Command
 {
 	private Judge[] _judges;
-	private string _commandStr;
-	public Command(MessageTypeEnum type, string commandStr, Dictionary<string, object> parameters)
+	public Command(, string commandStr, Dictionary<string, object> parameters)
 	{
-		//vts key:cl when hp<90% and area=九号解决方案
-		this.commandStr = commandStr;
-		string afterWhen = commandStr.Substring(commandStr.IndexOf("when") + "when".Length).Trim();
-		string[] parts = Regex.Split(afterWhen, @" and ");
-		int partsLength = parts.Length;
-		_judges = new Judge[partsLength];
-		for(int i=0; i<partsLength; i++)
+		//创建
+		MessageTypeEnum type = (MessageTypeEnum)parameters["type"]；
+		parameters.RemoveKey("type");
+		Judge[] judges = parameters["judges"];
+		for(int i=0; i<judges.Length; i++)
 		{
-			//AuraCanVTS.Log($"1.{parts[i]}");
-			Match match = Regex.Match(parts[i], @"^(?:(\w+)')?(\w+)([><=!]+)([\.\w]+)(%)?$");
-			//AuraCanVTS.Log($"1.5.{match.Groups[1].Value}~{match.Groups[2].Value}~{match.Groups[3].Value}~{match.Groups[4].Value}");
-			string name = match.Groups[1].Value;
-			string judgeKey = match.Groups[2].Value;
-			string sign = match.Groups[3].Value;
-			JudgeMethodEnum method;
-			object val;
-			//AuraCanVTS.Log($"2.{judgeKey} {sign}");
-			if(sign.Contains("="))
-			{
-				method = sign == "=" ? JudgeMethodEnum.eq : JudgeMethodEnum.ne;//=和!=
-				val = match.Groups[4].Value;
-			}
-			else
-			{
-				if(match.Groups.Count > 4)
-				{
-					method = match.Groups[3].Value == "<"? JudgeMethodEnum.ltp : JudgeMethodEnum.gtp;//<%和>%
-				}
-				else
-				{
-					method = match.Groups[3].Value == "<"? JudgeMethodEnum.lt : JudgeMethodEnum.gt;//<和>
-				}
-				val = double.Parse(match.Groups[4].Value);
-			}
-			Judge judge = new Judge(i, judgeKey, method, val);
-			_judges[i] = judge;
 			AuraCanVTS.AddJudgeToHandles(name, judgeKey, judge);
 		}
 		flags = new bool[partsLength];
@@ -509,19 +524,38 @@ public class Handle
 
 public class Judge
 {
-	private Command _command;
+	private Executer _executer;
+	private int _index;//Executer数组中的索引
 	private string _key;//比较参数在handle方法参数中的key
 	private JudgeMethodEnum _method;
 	private double _numVal;
 	private string _strVal;
-	private Executer _executer;
-	private int _index;//Executer数组中的索引
+	public Judge(Executer executer, int index, string judgeKey, JudgeMethodEnum method, object val)
+	{
+		_executer = executer;
+		_index = index;
+		_key = judgeKey;
+		_method = method;
+		if (val is int || val is double)
+		{
+			_numVal = (double) val;
+		}
+		else
+		{
+			_strVal = (string) val;
+		}
+	}
 }
 
 public class Executer
 {
 	private bool[] _flags;
 	private string _payload;
+	public Executer(int length, string payload)
+	{
+		_flags = new bool[length];
+		_payload = payload;
+	}
 }
 
 public class Message {
