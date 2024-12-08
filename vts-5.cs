@@ -15,30 +15,27 @@ public const string developer = "WhisperSongs"; // 插件作者
 
 RealPlugin.plug.RegisterNamedCallback(pluginName, new Action<object, string>(AuraCanVTS.LogProcess), null);
 AuraCanVTS.Init();
+AuraCanSocket.Init();
 
 public static class AuraCanVTS {
-	private static Dictionary<string, Handle> _handles = new Dictionary<string, Handle>();//key为10进制
-	private static Dictionary<int, Command> _commands = new Dictionary<int, Command>();//触发型命令列表
-
+	private static Dictionary<string, Handle> _handles;//日志行处理器列表
+	private static Dictionary<int, Command> _commands;//指令列表
+	private static VariableDictionary _dv;//持久变量
 	private static string playerName;//当前玩家名称
 
 	//该方法仅处理99行以内的网络日志
 	public static void LogProcess(object _, string logString)
 	{
-		//Logger.Log(logString);// TODO 暂时先只打印日志
 		string handleNo = logString.Substring(0, 2);
-		//00|2024-11-10T12:34:46.0000000+08:00|0038||vts key:cl when hp<90% and area=九号解决方案|72ca1ccd156b32cc
-		//00|2024-11-10T12:34:46.0000000+08:00|0038||vts show command|72ca1ccd156b32cc
 		//默语指令处理
 		if(handleNo == "00" && logString.Substring(37, 4) == "0038" && logString.Substring(43, 4) == "vts ")
 		{
-			//Log($"_handles Count {_handles.Count}");
 			string commandStr = logString.Substring(43, logString.LastIndexOf('|') - 43);//原始指令
 			string longCommandStr = "";//处理后的指令(长)
 			string shortCommandStr = "";//处理后的指令(短)
 			Dictionary<string, object> parameters;//处理后的参数
 			CommandTypeEnum commandType = CheckCommand(commandStr, out longCommandStr, out shortCommandStr,out parameters);
-			Logger.Log($"commandType: {commandType.ToString()}");
+			Logger.Log2($"commandType: {commandType.ToString()}");
 			switch (commandType) {
 				case CommandTypeEnum.createparameter://创建新参数
 				case CommandTypeEnum.deleteparameter://删除参数
@@ -69,13 +66,31 @@ public static class AuraCanVTS {
 		if(handleNo == "02")//更新当前玩家的名称和ID(可能会有更换模型的动作,因此不作为elseif)
 		{
 			playerName = logString.Split('|')[3];
-			Logger.Log(playerName);
+			Logger.Log("player " + playerName);
 		}
 	}
 
 	public static void Init() {
-		AuraCanSocket.Init();
+		_handles = new Dictionary<string, Handle>();//key为10进制
+		_commands = new Dictionary<int, Command>();//触发型命令列表
 		Logger.SetLogger(-3);// TODO 先直接传0,后续读持久变量
+		//字符串还原回方法
+		_dv = StaticHelpers.GetDictVariable(true, pluginName);
+		if(_dv == null)
+		{
+			StaticHelpers.SetDictVariable(true, pluginName, new VariableDictionary());
+			_dv = StaticHelpers.GetDictVariable(true, pluginName);
+		}
+		else
+		{
+			foreach(var v in _dv.Values.Values)
+			{
+				string commandStr = v.ToString();
+				CheckCommand(commandStr, out _, out _,out Dictionary<string, object> parameters);
+				VtsCreateCommand("", parameters);
+			}
+			Logger.Log($"rebuild {_dv.Size} command(s)");
+		}
 	}
 
 	private static CommandTypeEnum CheckCommand(string commandStr, out string longCommandStr, out string shortCommandStr, out Dictionary<string, object> parameters)
@@ -162,7 +177,7 @@ public static class AuraCanVTS {
 			if(!CheckCmd(typeAndCommand, out Dictionary<string, object> strAndPar))
 			{
 				string cmdErrMsg = (string)strAndPar["cmdErrMsg"];
-				throw new Exception($"{pluginName} {cmdErrMsg}。");
+				Logger.Log($"CheckCmdException {cmdErrMsg}。");
 			}
 			string longCmdStr = (string)strAndPar["longCmdStr"];
 			string shortCmdStr = (string)strAndPar["shortCmdStr"];
@@ -172,7 +187,7 @@ public static class AuraCanVTS {
 			string condition = match.Groups[3].Value;//传入参数
 			if(!CheckCondition(condition, payload, out string prepareConditionStr, out Judge[] judges))
 			{
-				throw new Exception($"{pluginName} {prepareConditionStr}。");
+				Logger.Log($"CheckConditionException {prepareConditionStr}。");
 			}
 			
 			longCommandStr = $"{longCmdStr} when {prepareConditionStr}";
@@ -192,7 +207,7 @@ public static class AuraCanVTS {
 		match = Regex.Match(commandStr, @"^vts\s+del(?:ete)?(?:\s+command)?\s+([A-Za-z0-9]{1,3})$");
 		if(match.Success)
 		{
-			int commandIndex = int.Parse(match.Groups[1].Value);;
+			string commandIndex = match.Groups[1].Value;
 			longCommandStr = $"vts delete command {commandIndex}";
 			shortCommandStr = $"vts del {commandIndex}";
 			parameters["commandIndex"] = commandIndex;
@@ -223,7 +238,6 @@ public static class AuraCanVTS {
 				vts execute command that set FaceAngleX=10, FaceAngleY=50 weight 0.8, FaceAngleZ=-10
 				vts set FaceAngleX=10 FaceAngleY=50 weight 0.8 FaceAngleZ=-10
 		*/
-				
 		match = Regex.Match(commandStr, @"^vts(?:\s+execute\s+command\s+that)?\s+(press|set)\s+(.+)$");
 		if(match.Success)
 		{
@@ -233,7 +247,7 @@ public static class AuraCanVTS {
 			if(!CheckCmd(typeAndCommand, out Dictionary<string, object> strAndPar))//校验命令
 			{
 				string cmdErrMsg = (string)strAndPar["cmdErrMsg"];
-				throw new Exception($"{pluginName} {cmdErrMsg}。");
+				throw new Exception($"CheckCmdException {cmdErrMsg}。");
 			}
 			longCommandStr = (string)strAndPar["longCmdStr"];
 			shortCommandStr = (string)strAndPar["shortCmdStr"];
@@ -261,51 +275,24 @@ public static class AuraCanVTS {
 		}
 		_commands.Add(newCommandKey, command);
 		//存入持久化变量
-		VariableDictionary dv = StaticHelpers.GetDictVariable(true, pluginName);
-		if(dv == null)
+		if(shortCommandStr != "")//初始化时也会调用这个方法,那时该参数为空字符串
 		{
-			StaticHelpers.SetDictVariable(true, pluginName, new VariableDictionary());
-			dv = StaticHelpers.GetDictVariable(true, pluginName);
+			_dv.SetValue(newCommandKey.ToString(), shortCommandStr);
 		}
-		dv.SetValue(newCommandKey.ToString(), shortCommandStr);
 		//Log($"{_handles.ToString()} {_commands.ToString()} {_commandDic.ToString()}");
 	}
 
 	private static void VtsDeleteCommand(Dictionary<string, object> parameters)
 	{
-		int commandIndex = (int)parameters["commandIndex"];
-		//删_commands中的command
-		/*if(_commands.ContainsKey(commandIndex))
-		{
-			_commands[commandIndex].Destroy();//不再让judge指向command
-			_commands.Remove(commandIndex);
-		}*/
-		//删_handles中的Judge(从handle里面删judge的时候注意下，可能要删不止一次)
-		//通过commandIndex从_commands中拿到Command
-		//遍历Command中的judge数组,从数组的judge中拿到judgeKey(_key)
-		//从_commandDic中通过judgeKey拿到handleNo(可以仿照AddJudgeToHandles)
-		//根据handleNo拿到Handle
-		//调用Handle的RemoveJudge方法,传入judgeKey,judge
-		
-		//RemoveJudge(string judgeKey, Judge judge);
-		//删持久变量
-		/*VariableDictionary dv = StaticHelpers.GetDictVariable(true, pluginName);
-		if(dv != null)
-		{
-			Log($"delete {commandIndex.ToString()} {pluginName}");
-			dv.RemoveKey(commandIndex.ToString(), pluginName);
-		}*/
+		//直接删除持久变量然后重新初始化
+		string commandIndex = (string)parameters["commandIndex"];
+		_dv.RemoveKey(commandIndex, pluginName);
+		Init();
 	}
 
 	private static void VtsShowCommand()
 	{
-		VariableDictionary dv = StaticHelpers.GetDictVariable(true, pluginName);
-		if(dv == null)
-		{
-			StaticHelpers.SetDictVariable(true, pluginName, new VariableDictionary());
-			dv = StaticHelpers.GetDictVariable(true, pluginName);
-		}
-		string allCommands = String.Join("\n", dv.Values.Select(pair => $"{pair.Key}{pair.Value}"));
+		string allCommands = String.Join("\n", _dv.Values.Select(pair => $"{pair.Key}{pair.Value}"));
 		Logger.Log(allCommands);
 	}
 
@@ -351,11 +338,14 @@ public static class AuraCanVTS {
 			Judge judge = new Judge(executer, i, judgeKey, method, val);
 			foreach(string handleNo in AuraCanDictionary.GetHandleNosByJudgeKey(judgeKey))
 			{
-				if(!_handles.ContainsKey(handleNo))
+				lock(_handles)
 				{
-					_handles[handleNo] = new Handle(handleNo);
+					if(!_handles.ContainsKey(handleNo))
+					{
+						_handles[handleNo] = new Handle(handleNo);
+					}
+					_handles[handleNo].AddJudge(name, judge);
 				}
-				_handles[handleNo].AddJudge(name, judge);
 			}
 			judges[i] = judge;
 		}
@@ -481,54 +471,69 @@ public class Command
 	{
 		_judges = judges;
 	}
+	public Judge[] GetJudges()
+	{
+		return _judges;
+	}
 }
 
 public class Handle
 {
-	private Dictionary<string, LinkedList<Judge>> _judges; //不同实体的判断列表
+	private Dictionary<string, List<Judge>> _judges; //不同实体的判断列表
 	private Dictionary<string, int> _parsIndex; //参数,位于日志中第几个
 	private int _nameIndex;//日志中第几个字段是实体的名字
+	private string _handleNo;//日志行序号
 	public Handle(string handleNo)
 	{
-		_judges = new Dictionary<string, LinkedList<Judge>>();
+		_judges = new Dictionary<string, List<Judge>>();
 		_parsIndex = AuraCanDictionary.GetParsIndexByHandleNo(handleNo);
 		_nameIndex = AuraCanDictionary.GetNameIndexByHandleNo(handleNo);
+		_handleNo = handleNo;
 	}
 	public void AddJudge(string name, Judge judge)
 	{
 		if(_judges.ContainsKey(name))
 		{
-			_judges[name].AddLast(judge);
+			_judges[name].Add(judge);
 		}
 		else
 		{
-			LinkedList<Judge> judgeList = new LinkedList<Judge>();
-			judgeList.AddLast(judge);
+			List<Judge> judgeList = new List<Judge>();
+			judgeList.Add(judge);
 			_judges.Add(name, judgeList);
 		}
 	}
 	public void Process(string[] log)
 	{
+		bool theEntitieFlag = _nameIndex != 0 && _judges.ContainsKey(log[_nameIndex]);//存在特定实体判断列表
+		bool anyEntitieFlag = _judges.ContainsKey("");//存在任意实体判断列表
+		if(!theEntitieFlag && !anyEntitieFlag)
+		{
+			return;
+		}
+		//有处理的必要才解析
 		Dictionary<string, string> pars = new Dictionary<string, string>();
 		foreach(KeyValuePair<string, int> kvp in _parsIndex)
 		{
 			pars.Add(kvp.Key,log[kvp.Value]);
-			//Logger.Log($"parsAdd {kvp.Key} {log[kvp.Value]}");
+			Logger.Log2($"parsAdd {_handleNo} {kvp.Key} {log[kvp.Value]}");
 		}
-		if(_nameIndex != 0 && _judges.ContainsKey(log[_nameIndex]))//特定实体的判断列表
+		if(theEntitieFlag)//特定实体的判断列表
 		{
-			foreach (Judge judge in _judges[log[_nameIndex]])
+			List<Judge> judges = _judges[log[_nameIndex]];
+			for(int i = 0; i < judges.Count; i++)
 			{
-				Logger.Log($"judge {log[_nameIndex]} ");
-				judge.Process(pars);
+				Logger.Log2($"{_handleNo} judge {log[_nameIndex]} {i+1}/{judges.Count}");
+				judges[i].Process(pars);
 			}
 		}
-		if(_judges.ContainsKey(""))//任意实体的判断列表
+		if(anyEntitieFlag)//任意实体的判断列表
 		{
-			foreach (Judge judge in _judges[""])
+			List<Judge> judges = _judges[""];
+			for(int i = 0; i < judges.Count; i++)
 			{
-				Logger.Log($"judge all ");
-				judge.Process(pars);
+				Logger.Log2($"{_handleNo} judge all {i+1}/{judges.Count}");
+				judges[i].Process(pars);
 			}
 		}
 	}
@@ -583,7 +588,7 @@ public class Judge
 				_executer.CheckSaveAndSend(_index, percent < _numVal);
 				break;
 			default:
-				throw new Exception($"{pluginName} 钝口螈!有活力的钝口螈!");
+				throw new Exception($"钝口螈!有活力的钝口螈!");
 				break;
 		}
 	}
@@ -632,9 +637,9 @@ public static class AuraCanSocket {
 	{
 		if (ws.ReadyState != WebSocketState.Open) {
 			ws = null;
-			Logger.Log($"{pluginName} WebSocket 连接未开启。");
+			Logger.Log($"WebSocket 连接未开启。");
 		}
-		Logger.Log2(payload);
+		Logger.Log2("send:" + payload);
 		ws.Send(payload);
 	}
 	// 插件连接
@@ -643,13 +648,13 @@ public static class AuraCanSocket {
 			WebSocket _ws = new WebSocket(wsUrl);
 			_ws.OnOpen += (_, __) => {
 				ws = (WebSocket) _ws;
-				Logger.Log2($"{pluginName} WebSocket OnOpen");
+				Logger.Log2($"WebSocket OnOpen");
 				Authenticate();
 			};
 			_ws.OnMessage += (_, e) => ProcessReceivedMessage(e.Data);
 			_ws.OnClose += (_, __) => {
 				ws = null;
-				Logger.Log2($"{pluginName} WebSocket OnClose");
+				Logger.Log2($"WebSocket OnClose");
 			};
 			_ws.ConnectAsync();
 		} else {
@@ -679,19 +684,19 @@ public static class AuraCanSocket {
 			if (errorId == "50" || errorId == "8") {
 				StaticHelpers.SetScalarVariable(true, "ACtoken", "");
 			}
-			Logger.Log($"{pluginName} error:{json}");
+			Logger.Log($"error:{json}");
 		} else {
-			Logger.Log2($"{pluginName} receive:{json}");
+			Logger.Log2($"receive:{json}");
 		}
 
 		if (json.Contains("authenticationToken")) {
 			string token = GetValueFromJson(json, "authenticationToken");
-			Logger.Log($"{pluginName} get and saved token");
+			Logger.Log($"get and saved token");
 			StaticHelpers.SetScalarVariable(true, "ACtoken", token);
 			Authenticate();
 		} else if (json.Contains("authenticated")) {
 			if (GetValueFromJson(json, "authenticated") == "false") {
-				Logger.Log($"{pluginName} lost token and try to re authenticate");
+				Logger.Log($"lost token and try to re authenticate");
 				StaticHelpers.SetScalarVariable(true, "ACtoken", "");
 				Authenticate();
 			}
@@ -739,11 +744,11 @@ public static class Logger
 	private static ILogger _logger2;//不太重要的信息(非关键提示信息,json字符串)
 	public static void Log(string msg)
 	{
-		_logger.Log(msg);
+		_logger.Log(pluginName + "\n" + msg);
 	}
 	public static void Log2(string msg)
 	{
-		_logger2.Log(msg);
+		_logger2.Log(pluginName + "\n" + msg);
 	}
 	public static void SetLogger(int logger)//数字绝对值越大日志越多,负数区间分给鲶鱼精邮差
 	{
