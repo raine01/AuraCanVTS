@@ -375,19 +375,19 @@ public static class AuraCanVTS {
 			parameters["mode"] = "set";
 			parameters["type"] = MessageTypeEnum.InjectParameterDataRequest;
 			List<Dictionary<string, object>> parameterValues = new List<Dictionary<string, object>>();
-			Match _match = Regex.Match(command, @"(\w+)=([-\d\.]+)(?:\s+weight\s+(0\.\d))?");
-			while(_match.Success)
+			Match setMatch = Regex.Match(command, @"(\w+)=([-\d\.]+)(?:\s+weight\s+(0\.\d))?");
+			while(setMatch.Success)
 			{
 				Dictionary<string, object> var = new Dictionary<string, object>();
-				string id = _match.Groups[1].Value;
-				string val = _match.Groups[2].Value;
+				string id = setMatch.Groups[1].Value;
+				string val = setMatch.Groups[2].Value;
 				var["id"] = id;
 				var["value"] = val;
 				longCmdStr = $"{longCmdStr} {id}={val}";
 				shortCmdStr = $"{shortCmdStr} {id}={val}";
-				if(_match.Groups.Count > 3)//有权值
+				if(setMatch.Groups.Count > 4)//有权值
 				{
-					string weight = _match.Groups[3].Value;
+					string weight = setMatch.Groups[3].Value;
 					longCmdStr = $"{longCmdStr} weight {weight}";
 					shortCmdStr = $"{shortCmdStr} weight {weight}";
 					var["weight"] = weight;
@@ -395,6 +395,7 @@ public static class AuraCanVTS {
 				longCmdStr = $"{longCmdStr}, ";
 				shortCmdStr = $"{shortCmdStr} ";
 				parameterValues.Add(var);
+				setMatch = setMatch.NextMatch(); // 关键：移动到下一个匹配项
 			}
 			parameters["parameterValues"] = parameterValues;
 			longCmdStr = longCmdStr.Substring(0, longCmdStr.Length - 1);
