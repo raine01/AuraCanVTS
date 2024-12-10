@@ -167,7 +167,7 @@ public static class AuraCanVTS {
 				vts create new command that set FaceAngleX=10, FaceAngleY=50 weight 0.8, FaceAngleZ=-10 when Raine'hp<90 and area=九号解决方案
 				vts set FaceAngleX=10 FaceAngleY=50 weight 0.8 FaceAngleZ=-10 when Raine'hp<90 and area=九号解决方案
 		*/
-		match = Regex.Match(commandStr, @"^vts(?:\s+create\s+new\s+command\s+that)?\s+(press|set)\s+(.+)\s+when\s+(.+)$");
+		match = Regex.Match(commandStr, @"^vts(?:\s+create\s+new\s+command\s+that)?\s+(press|set|start|stop)\s+(.+)\s+when\s+(.+)$");
 		if(match.Success)
 		{
 			//校验命令(顺便创建payload)
@@ -238,7 +238,7 @@ public static class AuraCanVTS {
 				vts execute command that set FaceAngleX=10, FaceAngleY=50 weight 0.8, FaceAngleZ=-10
 				vts set FaceAngleX=10 FaceAngleY=50 weight 0.8 FaceAngleZ=-10
 		*/
-		match = Regex.Match(commandStr, @"^vts(?:\s+execute\s+command\s+that)?\s+(press|set)\s+(.+)$");
+		match = Regex.Match(commandStr, @"^vts(?:\s+execute\s+command\s+that)?\s+(press|set|start|stop)\s+(.+)$");
 		if(match.Success)
 		{
 			Dictionary<string, string> typeAndCommand = new Dictionary<string, string>();//传入参数
@@ -361,14 +361,30 @@ public static class AuraCanVTS {
 		string command = typeAndCommand["command"];
 		strAndPar = new Dictionary<string, object>();
 		Dictionary<string, object> parameters = new Dictionary<string, object>();
-		if(type=="press")
+		if(type=="press") //热键
 		{
 			longCmdStr = $"vts create new command that press {command}";
 			shortCmdStr = $"vts press {command}";
 			parameters["hotkeyID"] = command;
 			parameters["type"] = MessageTypeEnum.HotkeyTriggerRequest;
 		}
-		else //set
+		else if(type=="start") //表达式
+		{
+			longCmdStr = $"vts create new command that start {command}";
+			shortCmdStr = $"vts start {command}";
+			parameters["expressionFile"] = command + ".exp3.json";
+			parameters["active"] = true;
+			parameters["type"] = MessageTypeEnum.ExpressionActivationRequest;
+		}
+		else if(type=="stop") //表达式
+		{
+			longCmdStr = $"vts create new command that stop {command}";
+			shortCmdStr = $"vts start {command}";
+			parameters["expressionFile"] = command + ".exp3.json";
+			parameters["active"] = false;
+			parameters["type"] = MessageTypeEnum.ExpressionActivationRequest;
+		}
+		else //set 设置参数
 		{
 			longCmdStr = "vts create new command that set ";
 			shortCmdStr = "vts set ";
@@ -725,7 +741,8 @@ public enum MessageTypeEnum {
 	ParameterCreationRequest, //添加新的自定义参数
 	ParameterDeletionRequest, //删除自定义参数
 	InjectParameterDataRequest, //输入默认或自定义参数的数据
-	HotkeyTriggerRequest //请求执行热键
+	HotkeyTriggerRequest, //请求执行热键
+	ExpressionActivationRequest //请求激活/停用表达式
 }
 
 public enum JudgeMethodEnum
@@ -735,7 +752,8 @@ public enum JudgeMethodEnum
 	eq, //=
 	ne, //!=
 	gtp, //>%
-	ltp //<%
+	ltp, //<%
+	alltrue //一直为真,用于更新数据
 }
 
 //日志打印
