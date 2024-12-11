@@ -18,10 +18,11 @@ AuraCanVTS.Init();
 AuraCanSocket.Init();
 
 public static class AuraCanVTS {
+	private static 
 	private static Dictionary<string, Handle> _handles;//日志行处理器列表
 	private static Dictionary<int, Command> _commands;//指令列表
 	private static VariableDictionary _dv;//持久变量
-	private static string playerName;//当前玩家名称
+	private static string playerName;//当前玩家名称(好像没用?)
 
 	//该方法仅处理99行以内的网络日志
 	public static void LogProcess(object _, string logString)
@@ -49,6 +50,9 @@ public static class AuraCanVTS {
 					VtsDeleteCommand(parameters);
 					break;
 				case CommandTypeEnum.showcommand://列出指令
+					VtsShowCommand();
+					break;
+				case CommandTypeEnum.schedular://调度器
 					VtsShowCommand();
 					break;
 				case CommandTypeEnum.donothing:
@@ -164,10 +168,8 @@ public static class AuraCanVTS {
 			eg:
 				vts create new command that press cl when Raine'hp<90 and area=九号解决方案
 				vts press cl when Raine'hp<90 and area=九号解决方案
-				vts create new command that set FaceAngleX=10, FaceAngleY=50 weight 0.8, FaceAngleZ=-10 when Raine'hp<90 and area=九号解决方案
-				vts set FaceAngleX=10 FaceAngleY=50 weight 0.8 FaceAngleZ=-10 when Raine'hp<90 and area=九号解决方案
 		*/
-		match = Regex.Match(commandStr, @"^vts(?:\s+create\s+new\s+command\s+that)?\s+(press|set|start|stop)\s+(.+)\s+when\s+(.+)$");
+		match = Regex.Match(commandStr, @"^vts(?:\s+create\s+new\s+command\s+that)?\s+(press|start|stop)\s+(.+)\s+when\s+(.+)$");
 		if(match.Success)
 		{
 			//校验命令(顺便创建payload)
@@ -255,6 +257,33 @@ public static class AuraCanVTS {
 			return CommandTypeEnum.executecommand;
 		}
 
+		/*
+			CommandTypeEnum.schedular:
+				更新调度器字典内的值,每秒发送一次
+			eg:
+				vts create schedular that set ParamBodyAngleX by Raine's hp
+				vts set ParamBodyAngleX Raine'hp
+				vts create schedular that set ParamBodyAngleX by Raine's %hp
+				vts set ParamBodyAngleX Raine'%hp
+		*/
+		match = Regex.Match(commandStr, @"^vts(?:\s+create\s+schedular\s+that)?\s+(set|unset)\s+([^\s]+)(?:\s+by)\s+(?:(\w+)'(?:s\s+))?(%)?(\w+)$");
+		if(match.Success)
+		{
+			string type = match.Groups[1].Value;//type set|unset
+			string key = match.Groups[2].Value;//key
+			string name = match.Groups[3].Value;//name
+			string p = match.Groups[4].Value;//%
+			string judgeKey = match.Groups[5].Value;//judgeKey
+			parameters["type"] = type;
+			parameters["key"] = key;
+			parameters["name"] = name;
+			parameters["p"] = p;
+			parameters["judgeKey"] = judgeKey;
+			longCommandStr = $"vts create schedular that {type} {key} by {name}'s {p}{judgeKey}";
+			shortCommandStr = $"vts {type} {key} {name}'{p}{judgeKey}";
+			return CommandTypeEnum.schedular;
+		}
+
 		longCommandStr = null;
 		shortCommandStr = null;
 		parameters = null;
@@ -296,6 +325,12 @@ public static class AuraCanVTS {
 		Logger.Log(allCommands);
 	}
 
+	private static void VtsSchedular(Dictionary<string, object> parameters)
+	{
+		//调度器
+		
+	}
+
 	//true表示没问题,out格式化后的;false表示有问题,out异常提示
 	private static bool CheckCondition(string conditionStr, string payload, out string prepareConditionStr, out Judge[] judges)
 	{
@@ -325,7 +360,7 @@ public static class AuraCanVTS {
 			}
 			else
 			{
-				if(match.Groups.Count > 4)
+				if(!"".Equals(match.Groups[5]))//匹配到了%
 				{
 					method = match.Groups[3].Value == "<"? JudgeMethodEnum.ltp : JudgeMethodEnum.gtp;//<%和>%
 				}
@@ -383,39 +418,6 @@ public static class AuraCanVTS {
 			parameters["expressionFile"] = command + ".exp3.json";
 			parameters["active"] = false;
 			parameters["type"] = MessageTypeEnum.ExpressionActivationRequest;
-		}
-		else //set 设置参数
-		{
-			longCmdStr = "vts create new command that set ";
-			shortCmdStr = "vts set ";
-			parameters["mode"] = "set";
-			parameters["type"] = MessageTypeEnum.InjectParameterDataRequest;
-			List<Dictionary<string, object>> parameterValues = new List<Dictionary<string, object>>();
-			Match setMatch = Regex.Match(command, @"(\w+)=([-\d\.]+)(?:\s+weight\s+(0\.\d))?");
-			while(setMatch.Success)
-			{
-				Dictionary<string, object> var = new Dictionary<string, object>();
-				string id = setMatch.Groups[1].Value;
-				string val = setMatch.Groups[2].Value;
-				var["id"] = id;
-				var["value"] = val;
-				longCmdStr = $"{longCmdStr} {id}={val}";
-				shortCmdStr = $"{shortCmdStr} {id}={val}";
-				if(setMatch.Groups.Count > 4)//有权值
-				{
-					string weight = setMatch.Groups[3].Value;
-					longCmdStr = $"{longCmdStr} weight {weight}";
-					shortCmdStr = $"{shortCmdStr} weight {weight}";
-					var["weight"] = weight;
-				}
-				longCmdStr = $"{longCmdStr}, ";
-				shortCmdStr = $"{shortCmdStr} ";
-				parameterValues.Add(var);
-				setMatch = setMatch.NextMatch(); // 关键：移动到下一个匹配项
-			}
-			parameters["parameterValues"] = parameterValues;
-			longCmdStr = longCmdStr.Substring(0, longCmdStr.Length - 1);
-			shortCmdStr = shortCmdStr.Substring(0, shortCmdStr.Length - 1);
 		}
 		strAndPar["longCmdStr"] = longCmdStr;
 		strAndPar["shortCmdStr"] = shortCmdStr;
@@ -530,6 +532,7 @@ public class Handle
 		}
 		//有处理的必要才解析
 		Dictionary<string, string> pars = new Dictionary<string, string>();
+		pars.Add("name", _nameIndex == 0 ? "" : log[_nameIndex]); //有名字就把名字塞进去
 		foreach(KeyValuePair<string, int> kvp in _parsIndex)
 		{
 			pars.Add(kvp.Key,log[kvp.Value]);
@@ -604,10 +607,51 @@ public class Judge
 				percent = double.Parse(pars[_key]) * 100 / double.Parse(pars[_key.ToUpper()]);
 				_executer.CheckSaveAndSend(_index, percent < _numVal);
 				break;
+			case JudgeMethodEnum.alltrue://更新定时器用的
+				Schedular.UpdateValue($"{pars["name"]},{_key}", double.Parse(pars[_key]));
+			case JudgeMethodEnum.alltruep://更新定时器用的%(范围为0~1)
+				Schedular.UpdateValue($"{pars["name"]},{_key}%", double.Parse(pars[_key]) / double.Parse(pars[_key.ToUpper()]));
 			default:
 				throw new Exception($"钝口螈!有活力的钝口螈!");
 				break;
 		}
+	}
+}
+
+public class Schedular //调度器
+{
+	Timer _timer
+	Dictionary<string, object> _setValDic;
+	public Schedular()
+	{
+		_timer = new Timer();
+		_timer.Interval = 1000;
+		_timer.Elapsed += SendSetMsg;
+		_timer.Start();//停止用Stop
+	}
+	public static void Add(string key) => _setValDic[key] = "0";
+	public static void UpdateValue(string key, string val) => _setValDic[key] = val;
+	public static void DeleteValue(string key) => _setValDic.Remove(key);
+	public static void SendSetMsg()
+	{
+		if(_setValDic.Count == 0)
+		{
+			return;
+		}
+		List<Dictionary<string, object>> parameters = new Dictionary<string, object>();
+		parameters["mode"] = "set";
+		parameters["type"] = MessageTypeEnum.InjectParameterDataRequest;
+		List<Dictionary<string, object>> parameterValues = new List<Dictionary<string, object>>();
+		foreach(KeyValuePair<string, object> kvp in _setValDic)
+		{
+			Dictionary<string, object> var = new Dictionary<string, object>();
+			var["id"] = kvp.Key;
+			var["value"] = kvp.Value;
+			parameterValues.Add(var);
+		}
+		parameters["parameterValues"] = parameterValues;
+		Message msg = new Message(parameters);
+		AuraCanSocket.SendToVTubeStudio(msg.Serialize());
 	}
 }
 
@@ -732,6 +776,7 @@ public enum CommandTypeEnum
 	deletecommand, //删除命令
 	showcommand, //列出已创建的命令
 	executecommand, //立刻执行
+	schedular, //调度器
 	donothing //啥都不干
 }
 
@@ -753,7 +798,8 @@ public enum JudgeMethodEnum
 	ne, //!=
 	gtp, //>%
 	ltp, //<%
-	alltrue //一直为真,用于更新数据
+	alltrue, //一直为真,用于更新数据
+	alltruep //一直为真,用于更新数据%
 }
 
 //日志打印
