@@ -18,7 +18,7 @@ AuraCanVTS.Init();
 AuraCanSocket.Init();
 
 public static class AuraCanVTS {
-	private static 
+	private static Schedular _schedular;//定时任务
 	private static Dictionary<string, Handle> _handles;//日志行处理器列表
 	private static Dictionary<int, Command> _commands;//指令列表
 	private static VariableDictionary _dv;//持久变量
@@ -52,8 +52,8 @@ public static class AuraCanVTS {
 				case CommandTypeEnum.showcommand://列出指令
 					VtsShowCommand();
 					break;
-				case CommandTypeEnum.schedular://调度器
-					VtsShowCommand();
+				case CommandTypeEnum.schedular://定时器
+					VtsCreateSchedular(shortCommandStr,parameters);
 					break;
 				case CommandTypeEnum.donothing:
 					Logger.Log("啥也不干");
@@ -90,8 +90,16 @@ public static class AuraCanVTS {
 			foreach(var v in _dv.Values.Values)
 			{
 				string commandStr = v.ToString();
-				CheckCommand(commandStr, out _, out _,out Dictionary<string, object> parameters);
-				VtsCreateCommand("", parameters);
+				if(Regex.Match(commandStr, @"^vts set").Success) //set
+				{
+					CheckCommand(commandStr, out _, out _,out Dictionary<string, object> parameters);
+					VtsCreateCommand("", parameters);
+				}
+				else //start/stop/press
+				{
+					CheckCommand(commandStr, out _, out _,out Dictionary<string, object> parameters);
+					VtsCreateSchedular("", parameters);
+				}
 			}
 			Logger.Log($"rebuild {_dv.Size} command(s)");
 		}
@@ -134,7 +142,7 @@ public static class AuraCanVTS {
 			parameters["defaultValue"] = defaultValue;
 			parameters["type"] = MessageTypeEnum.ParameterCreationRequest;
 
-			if(match.Groups.Count > 5)//有备注
+			if(!"".Equals(match.Groups[5]))//有备注
 			{
 				string explanation = match.Groups[5].Value;
 				longCommandStr = $"{longCommandStr}, and notes that {explanation}";
@@ -259,28 +267,26 @@ public static class AuraCanVTS {
 
 		/*
 			CommandTypeEnum.schedular:
-				更新调度器字典内的值,每秒发送一次
+				给定时器的字典添加一个值,根据日志行更新,每秒发送一次
 			eg:
-				vts create schedular that set ParamBodyAngleX by Raine's hp
+				vts update schedular that set ParamBodyAngleX by Raine's hp
 				vts set ParamBodyAngleX Raine'hp
-				vts create schedular that set ParamBodyAngleX by Raine's %hp
+				vts update schedular that set ParamBodyAngleX by Raine's %hp
 				vts set ParamBodyAngleX Raine'%hp
 		*/
-		match = Regex.Match(commandStr, @"^vts(?:\s+create\s+schedular\s+that)?\s+(set|unset)\s+([^\s]+)(?:\s+by)\s+(?:(\w+)'(?:s\s+))?(%)?(\w+)$");
+		match = Regex.Match(commandStr, @"^vts(?:\s+update\s+schedular\s+that)?\s+set\s+([^\s]+)(?:(?:\s+by)\s+(?:(\w+)'(?:s\s+))?(%)?(\w+))?$");
 		if(match.Success)
 		{
-			string type = match.Groups[1].Value;//type set|unset
-			string key = match.Groups[2].Value;//key
-			string name = match.Groups[3].Value;//name
-			string p = match.Groups[4].Value;//%
-			string judgeKey = match.Groups[5].Value;//judgeKey
-			parameters["type"] = type;
+			string key = match.Groups[1].Value;//key
+			string name = match.Groups[2].Value;//name
+			string p = match.Groups[3].Value;//%
+			string judgeKey = match.Groups[4].Value;//judgeKey
 			parameters["key"] = key;
 			parameters["name"] = name;
 			parameters["p"] = p;
 			parameters["judgeKey"] = judgeKey;
-			longCommandStr = $"vts create schedular that {type} {key} by {name}'s {p}{judgeKey}";
-			shortCommandStr = $"vts {type} {key} {name}'{p}{judgeKey}";
+			longCommandStr = $"vts create schedular that set {key} by {name}'s {p}{judgeKey}";
+			shortCommandStr = $"vts set {key} {name}'{p}{judgeKey}";
 			return CommandTypeEnum.schedular;
 		}
 
@@ -297,16 +303,16 @@ public static class AuraCanVTS {
 		parameters.Remove("judges");
 		Command command = new Command(judges);
 		//获取序号
-		int newCommandKey = 0;
-		int[] commandKeys = _commands.Keys.ToArray();
-		if (commandKeys.Length > 0) {
-			newCommandKey = commandKeys.Max() + 1;
+		int dvKey = 0;
+		int[] dvKeys = _dv.Keys.ToArray();
+		if (dvKeys.Length > 0) {
+			dvKey = dvKeys.Max() + 1;
 		}
-		_commands.Add(newCommandKey, command);
+		_commands.Add(dvKey, command);
 		//存入持久化变量
 		if(shortCommandStr != "")//初始化时也会调用这个方法,那时该参数为空字符串
 		{
-			_dv.SetValue(newCommandKey.ToString(), shortCommandStr);
+			_dv.SetValue(dvKey.ToString(), shortCommandStr);
 		}
 		//Log($"{_handles.ToString()} {_commands.ToString()} {_commandDic.ToString()}");
 	}
@@ -325,10 +331,39 @@ public static class AuraCanVTS {
 		Logger.Log(allCommands);
 	}
 
-	private static void VtsSchedular(Dictionary<string, object> parameters)
+	private static void VtsCreateSchedular(string shortCommandStr, Dictionary<string, object> parameters)
 	{
-		//调度器
-		
+		//先搓一个judge
+		string key = parameters["key"];
+		string name = parameters["name"];
+		string judgeKey = parameters["judgeKey"];
+		JudgeMethodEnum method = parameters["p"] == "" ? JudgeMethodEnum.alltrue : JudgeMethodEnum.alltruep;
+		Judge judge = Judge(null, 0, judgeKey, method, null);//只有judgeKey和method有用
+		//把judge放进去
+		foreach(string handleNo in AuraCanDictionary.GetHandleNosByJudgeKey(judgeKey))
+		{
+			lock(_handles)
+			{
+				if(!_handles.ContainsKey(handleNo))
+				{
+					_handles[handleNo] = new Handle(handleNo);
+				}
+				_handles[handleNo].AddJudge(name, judge);
+			}
+		}
+		//把参数放进Schedular
+		Schedular.Add(string key);
+		//获取序号
+		int dvKey = 0;
+		int[] dvKeys = _dv.Keys.ToArray();
+		if (dvKeys.Length > 0) {
+			dvKey = dvKeys.Max() + 1;
+		}
+		//存入持久化变量
+		if(shortCommandStr != "")//初始化时也会调用这个方法,那时该参数为空字符串
+		{
+			_dv.SetValue(dvKey.ToString(), shortCommandStr);
+		}
 	}
 
 	//true表示没问题,out格式化后的;false表示有问题,out异常提示
@@ -511,15 +546,18 @@ public class Handle
 	}
 	public void AddJudge(string name, Judge judge)
 	{
-		if(_judges.ContainsKey(name))
+		lock(_judges)
 		{
-			_judges[name].Add(judge);
-		}
-		else
-		{
-			List<Judge> judgeList = new List<Judge>();
-			judgeList.Add(judge);
-			_judges.Add(name, judgeList);
+			if(_judges.ContainsKey(name))
+			{
+				_judges[name].Add(judge);
+			}
+			else
+			{
+				List<Judge> judgeList = new List<Judge>();
+				judgeList.Add(judge);
+				_judges.Add(name, judgeList);
+			}
 		}
 	}
 	public void Process(string[] log)
@@ -620,8 +658,8 @@ public class Judge
 
 public class Schedular //调度器
 {
-	Timer _timer
-	Dictionary<string, object> _setValDic;
+	Timer _timer;
+	Dictionary<string, object> _setValDic;//key的格式为 name,judgeKey value的格式为double
 	public Schedular()
 	{
 		_timer = new Timer();
