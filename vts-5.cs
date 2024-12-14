@@ -72,7 +72,7 @@ public static class AuraCanVTS {
 		if(handleNo == "02")//更新当前玩家的名称和ID(可能会有更换模型的动作,因此不作为elseif)
 		{
 			playerName = logString.Split('|')[3];
-			Logger.Log("player " + playerName);
+			Logger.Log2("player " + playerName);
 		}
 	}
 
@@ -261,7 +261,7 @@ public static class AuraCanVTS {
 
 		/*
 			CommandTypeEnum.showcommand:
-				好像也没啥要写的
+				列出所有的命令,包括指令与定时器
 			eg:
 				vts show all commands
 				vts show cmd
@@ -269,14 +269,14 @@ public static class AuraCanVTS {
 		match = Regex.Match(commandStr, @"^vts\s+show(\s+all)?\s+(commands|cmd)$");
 		if(match.Success)
 		{
-			longCommandStr = "";
-			shortCommandStr = "";
+			longCommandStr = "vts show all commands";
+			shortCommandStr = "vts show cmd";
 			return CommandTypeEnum.showcommand;
 		}
 
 		/*
 			CommandTypeEnum.executecommand:
-				好像同样没啥要写的
+				直接执行指令,仅包括press/start/stop
 			eg:
 				vts execute command that press cl
 				vts press cl
@@ -400,6 +400,7 @@ public static class AuraCanVTS {
 			newDv.Add(key, val);
 			allCommands += $"{key}{val}\n";
 		}
+		Logger.Log(allCommands.Substring(0, allCommands.Length - 1));
 		_dv = new VariableDictionary(newDv);
 	}
 
@@ -535,7 +536,10 @@ public static class AuraCanVTS {
 public static class AuraCanDictionary {
 	private static Dictionary<string, string> _commandDic = new Dictionary<string, string>//日志字段字典
 	{
-		{ "hp", "24,1,5,6;39,1,2,3" },//handleNo,name,judgeKey,judgeKey.ToUpper()
+		//handleNo,name,judgeKey,judgeKey.ToUpper()
+		//每个属性不能同一handleNo出现两次
+		//21行将目标作为主体
+		{ "hp", "24,1,5,6;39,1,2,3;03,1,9,10;04,1,9,10;21,5,22,23" },
 		{ "area", "40,,2" },
 		{ "areasub", "40,,3" }
 	};
