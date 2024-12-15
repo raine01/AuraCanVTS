@@ -13,12 +13,11 @@ public const string wsUrl = "ws://127.0.0.1:8001"; // API地址
 public const string pluginName = "AuraCanVTS"; // 插件名称，同时也是日志关键词
 public const string developer = "WhisperSongs"; // 插件作者
 // 插件图标 pluginIcon
-AuraCanVTS.Init();
+AuraCanVTS.Init("abcde");
 
 public static class AuraCanVTS {
 	private static Schedular _schedular;//定时任务
 	private static Dictionary<string, Handle> _handles;//日志行处理器列表
-	private static Dictionary<int, Command> _commands;//指令列表
 	private static VariableDictionary _dv;//持久变量
 	private static string playerName;//当前玩家名称(好像没用?)
 
@@ -34,7 +33,8 @@ public static class AuraCanVTS {
 			string shortCommandStr = "";//处理后的指令(短)
 			Dictionary<string, object> parameters;//处理后的参数
 			CommandTypeEnum commandType = CheckCommand(commandStr, out longCommandStr, out shortCommandStr,out parameters);
-			Logger.Log2($"commandType: {commandType.ToString()}");
+			Logger.Log2($"commandType:{commandType.ToString()}");
+			Logger.Log($"command:{longCommandStr}");
 			switch (commandType) {
 				case CommandTypeEnum.createparameter://创建新参数
 				case CommandTypeEnum.deleteparameter://删除参数
@@ -60,30 +60,27 @@ public static class AuraCanVTS {
 					Logger.Log("啥也不干");
 					break; //无匹配
 			}
-			Logger.Log($"command: {longCommandStr}");
 		}
 		else if(_handles.ContainsKey(handleNo))//其他日志处理(非默语)
 		{
-			//Log($"handleNo {handleNo}");
 			logString = logString.Substring(37);
 			string[] log = logString.Split('|');
 			_handles[handleNo].Process(log);
+			Logger.Log2($"new log,handleNo:{handleNo}");
 		}
 		if(handleNo == "02")//更新当前玩家的名称和ID(可能会有更换模型的动作,因此不作为elseif)
 		{
 			playerName = logString.Split('|')[3];
-			Logger.Log2("player " + playerName);
+			Logger.Log2($"player {playerName}");
 		}
 	}
 
-	public static void Init() => Init("abcde");
 	public static void Init(string steps)
 	{
 		//初始化类
 		if(steps.Contains("a"))
 		{
 			_handles = new Dictionary<string, Handle>();//key为10进制
-			_commands = new Dictionary<int, Command>();//触发型命令列表
 			string logLevel = StaticHelpers.GetScalarVariable(true, $"{pluginName}LogLevel") ?? "0";//日志级别,默认0
 			Logger.SetLogger(logLevel);
 			Logger.Log2($"init a finished");
@@ -91,7 +88,7 @@ public static class AuraCanVTS {
 		//初始化websocket链接
 		if(steps.Contains("b"))
 		{
-			AuraCanSocket.Init();
+			AuraCanSocket.InitSocket();
 			Logger.Log2($"init b finished");
 		}
 		//初始化定时器
@@ -116,13 +113,13 @@ public static class AuraCanVTS {
 					string commandStr = v.ToString();
 					if(Regex.Match(commandStr, @"^vts set").Success) //set
 					{
-						Logger.Log2($"init schedular {commandStr}");
+						Logger.Log2($"init schedular:{commandStr}");
 						CheckCommand(commandStr, out _, out _,out Dictionary<string, object> parameters);
 						VtsCreateSchedular("", parameters);
 					}
 					else //start/stop/press
 					{
-						Logger.Log2($"init command {commandStr}");
+						Logger.Log2($"init command:{commandStr}");
 						CheckCommand(commandStr, out _, out _,out Dictionary<string, object> parameters);
 						VtsCreateCommand("", parameters);
 					}
@@ -137,7 +134,7 @@ public static class AuraCanVTS {
 			RealPlugin.plug.RegisterNamedCallback(pluginName, new Action<object, string>(AuraCanVTS.LogProcess), null);
 			Logger.Log2($"init e finished");
 		}
-		Logger.Log($"init finished");
+		Logger.Log2($"init finished");
 	}
 
 	private static CommandTypeEnum CheckCommand(string commandStr, out string longCommandStr, out string shortCommandStr, out Dictionary<string, object> parameters)
@@ -244,12 +241,12 @@ public static class AuraCanVTS {
 
 		/*
 			CommandTypeEnum.deletecommand:
-				好像没啥要写的
+				删命令,包括定时器和指令,参数是0~999的数字.插件变量最少四位字符,所以不冲突
 			eg:
 				vts delete command 1
 				vts del 1
 		*/
-		match = Regex.Match(commandStr, @"^vts\s+del(?:ete)?(?:\s+command)?\s+([A-Za-z0-9]{1,3})$");
+		match = Regex.Match(commandStr, @"^vts\s+del(?:ete)?(?:\s+command)?\s+([A-Za-z0-9]{1,3})$");//要是1000个指令依旧不够用,会开放字符作为序号
 		if(match.Success)
 		{
 			string commandIndex = match.Groups[1].Value;
@@ -358,7 +355,6 @@ public static class AuraCanVTS {
 		//创建command对象
 		Judge[] judges = (Judge[])parameters["judges"];
 		parameters.Remove("judges");
-		Command command = new Command(judges);
 		//存入持久化变量
 		if(shortCommandStr != "")//初始化时也会调用这个方法,那时该参数为空字符串
 		{
@@ -381,8 +377,6 @@ public static class AuraCanVTS {
 
 	private static void VtsShowCommand()
 	{
-		/*string allCommands = String.Join("\n", _dv.Values.Select(pair => $"{pair.Key}{pair.Value}"));
-		Logger.Log(allCommands);*/
 		string[] stringKeys = _dv.Values.Keys.ToArray();
 		int[] intKeys = new int[stringKeys.Length];
 		for(int i = 0; i < stringKeys.Length; i++)
@@ -399,8 +393,16 @@ public static class AuraCanVTS {
 			newDv.Add(key, val);
 			allCommands += $"{key}{val}\n";
 		}
-		Logger.Log(allCommands.Substring(0, allCommands.Length - 1));
+		if(intKeys.Length > 0)
+		{
+			Logger.Log($"have {intKeys.Length} command(s) and schedular:\n{allCommands.Substring(0, allCommands.Length - 1)}");
+		}
+		else
+		{
+			Logger.Log($"have neither command nor schedular");
+		}
 		_dv = new VariableDictionary(newDv);
+		StaticHelpers.SetDictVariable(true, pluginName, _dv);
 	}
 
 	private static void VtsCreateSchedular(string shortCommandStr, Dictionary<string, object> parameters)
@@ -423,8 +425,6 @@ public static class AuraCanVTS {
 				_handles[handleNo].AddJudge(name, judge);
 			}
 		}
-		//把参数放进Schedular
-		Schedular.Add(key);
 		//存入持久化变量
 		if(shortCommandStr != "")//初始化时也会调用这个方法,那时该参数为空字符串
 		{
@@ -520,7 +520,7 @@ public static class AuraCanVTS {
 		else if(type=="stop") //表达式
 		{
 			longCmdStr = $"vts create new command that stop {command}";
-			shortCmdStr = $"vts start {command}";
+			shortCmdStr = $"vts stop {command}";
 			parameters["expressionFile"] = command + ".exp3.json";
 			parameters["active"] = false;
 			parameters["type"] = MessageTypeEnum.ExpressionActivationRequest;
@@ -538,7 +538,7 @@ public static class AuraCanDictionary {
 		//handleNo,name,judgeKey,judgeKey.ToUpper()
 		//每个属性不能同一handleNo出现两次
 		{ "area", "40,,2" },
-		{ "hp", "24,1,5,6;39,1,2,3;03,1,9,10;04,1,9,10;21,5,22,23" },//21行将目标作为主体
+		{ "hp", "03,1,9,10;04,1,9,10;21,1,32,33;24,1,5,6;39,1,2,3" },
 		{ "skill", "21,1,3" },
 		{ "target", "21,1,5" },
 		{ "areasub", "40,,3" }
@@ -593,19 +593,6 @@ public static class AuraCanDictionary {
 	}
 }
 
-public class Command
-{
-	private Judge[] _judges;
-	public Command(Judge[] judges)
-	{
-		_judges = judges;
-	}
-	public Judge[] GetJudges()
-	{
-		return _judges;
-	}
-}
-
 public class Handle
 {
 	private Dictionary<string, List<Judge>> _judges; //不同实体的判断列表
@@ -649,14 +636,14 @@ public class Handle
 		foreach(KeyValuePair<string, int> kvp in _parsIndex)
 		{
 			pars.Add(kvp.Key,log[kvp.Value]);
-			Logger.Log2($"parsAdd {_handleNo} {kvp.Key} {log[kvp.Value]}");
+			Logger.Log2($"Handle{_handleNo} add par:{kvp.Key} {log[kvp.Value]}");
 		}
 		if(theEntitieFlag)//特定实体的判断列表
 		{
 			List<Judge> judges = _judges[log[_nameIndex]];
 			for(int i = 0; i < judges.Count; i++)
 			{
-				Logger.Log2($"{_handleNo} judge {log[_nameIndex]} {i+1}/{judges.Count}");
+				Logger.Log2($"handleNo:{_handleNo}'s judge,entityname {log[_nameIndex]}, {i+1}/{judges.Count}");
 				judges[i].Process(pars);
 			}
 		}
@@ -665,7 +652,7 @@ public class Handle
 			List<Judge> judges = _judges[""];
 			for(int i = 0; i < judges.Count; i++)
 			{
-				Logger.Log2($"{_handleNo} judge all {i+1}/{judges.Count}");
+				Logger.Log2($"handleNo:{_handleNo}'s judge, all entity, {i+1}/{judges.Count}");
 				judges[i].Process(pars);
 			}
 		}
@@ -740,23 +727,25 @@ public class Schedular //定时器
 	private static int _count;//每秒一次日志太频繁了,加个计数器
 	public Schedular()
 	{
+		StaticHelpers.Storage.TryGetValue($"{pluginName}Timer", out object timerObj);
+		_timer = (System.Threading.Timer)timerObj;
 		if(_timer != null)
 		{
 			_timer.Dispose();
 		}
+		_timer = new System.Threading.Timer(SendSetMsg, null, 0, 900);
+		StaticHelpers.Storage[$"{pluginName}Timer"] = _timer;
 		_setValDic = new Dictionary<string, object>();
-		_timer = new System.Threading.Timer(SendSetMsg, null, 0, 500);
 	}
-	public static void Add(string key) => _setValDic[key] = "0";
+	public static void StopSchedular() => _timer.Dispose();
 	public static void UpdateValue(string key, double val) => _setValDic[key] = val;
-	public static void DeleteValue(string key) => _setValDic.Remove(key);
 	private static void SendSetMsg(object status)
 	{
 		if(_count-- == 0)
 		{
 			string allSetPars = String.Join(",", _setValDic.Select(pair => $"{pair.Key}"));
-			Logger.Log2($"Schedular is working:{allSetPars}");
-			_count = 60;
+			Logger.Log2($"Schedular is working, param list:{allSetPars}");
+			_count = 30;//30周期打印一次日志
 		}
 		if(_setValDic.Count == 0)
 		{
@@ -793,7 +782,7 @@ public class Executer
 		bool before = _flags.All(x => x);
 		_flags[index] = checkResult;
 		bool after = _flags.All(x => x);
-		Logger.Log($"before {before} after {after}, checkResult {checkResult}");
+		Logger.Log2($"before {before} after {after}, checkResult {checkResult}");
 		if(!before&&after)
 		{
 			AuraCanSocket.SendToVTubeStudio(_payload);
@@ -806,7 +795,6 @@ public class Message {
 	public string apiVersion { get; set; } = "1.0";
 	public string messageType { get; set; }
 	public Dictionary<string, object> data { get; set; }
-
 	public Message(Dictionary<string, object> data) {
 		this.messageType = data["type"].ToString();
 		data.Remove("type");
@@ -824,11 +812,11 @@ public static class AuraCanSocket {
 			ws = null;
 			Logger.Log($"WebSocket 连接未开启。");
 		}
-		Logger.Log2("send:" + payload);
+		Logger.Log3("send:" + payload);
 		ws.Send(payload);
 	}
 	// 插件连接
-	public static void Init() {
+	public static void InitSocket() {
 		if (ws == null) {
 			WebSocket _ws = new WebSocket(wsUrl);
 			_ws.OnOpen += (_, __) => {
@@ -840,6 +828,7 @@ public static class AuraCanSocket {
 			_ws.OnClose += (_, __) => {
 				ws = null;
 				Logger.Log2($"WebSocket OnClose");
+				Schedular.StopSchedular();
 			};
 			_ws.ConnectAsync();
 		} else {
@@ -864,16 +853,14 @@ public static class AuraCanSocket {
 		SendToVTubeStudio(payload);
 	}
 	private static void ProcessReceivedMessage(string json) {
+		Logger.Log3($"receive:{json}");
 		if (json.Contains("errorID")) {
 			string errorId = GetValueFromJson(json, "errorID");
 			if (errorId == "50" || errorId == "8") {
 				StaticHelpers.SetScalarVariable(true, "ACtoken", "");
 			}
 			Logger.Log($"error:{json}");
-		} else {
-			Logger.Log2($"receive:{json}");
 		}
-
 		if (json.Contains("authenticationToken")) {
 			string token = GetValueFromJson(json, "authenticationToken");
 			Logger.Log($"get and saved token");
@@ -930,46 +917,33 @@ public enum JudgeMethodEnum
 //日志打印
 public static class Logger
 {
-	private static ILogger _logger;//重要信息(报错,关键提示信息)
-	private static ILogger _logger2;//不太重要的信息(非关键提示信息,json字符串)
-	public static void Log(string msg) => _logger.Log(pluginName + "\n" + msg);
-	public static void Log2(string msg) => _logger2.Log(pluginName + "\n" + msg);
+	private static ILogger _logger;//重要信息(例如报错和关键提示信息)
+	private static ILogger _logger2;//不太重要的信息(例如非关键提示信息)
+	public static void Log(string msg) => _logger.Log($"{pluginName} {msg}");
+	public static void Log2(string msg) => _logger2.Log($"{pluginName} {msg}");
+	//json字符串全打日志里,否则过于喧嚣
+	public static void Log3(string msg) => StaticHelpers.Log(RealPlugin.DebugLevelEnum.Custom2, msg);
+	private static readonly Dictionary<string, (ILogger logger, ILogger logger2)> loggers = new()
+	{
+		["-3"] = (new PostNamazuLogger(), new PostNamazuLogger()), //鲶鱼精+鲶鱼精
+		["-2"] = (new PostNamazuLogger(), new TextAuraLogger()), //鲶鱼精邮差+悬浮窗
+		["-1"] = (new PostNamazuLogger(), new TriggernometryLogger()), //鲶鱼精邮差+日志行
+		["0"] = (new TriggernometryLogger(), new NoneLogger()), //仅日志行打印重要日志
+		["1"] = (new TriggernometryLogger(), new TriggernometryLogger()), //日志行打印全部日志
+		["2"] = (new TextAuraLogger(), new TriggernometryLogger()), //悬浮窗+日志行
+		["3"] = (new TextAuraLogger(), new TextAuraLogger()), //悬浮窗打印全部日志
+	};
 	public static void SetLogger(string level)//数字绝对值越大日志越多,负数区间分给鲶鱼精邮差
 	{
 		StaticHelpers.SetScalarVariable(true, $"{pluginName}LogLevel", level);
-		switch(level)
+		if(loggers.TryGetValue(level, out var loggerPair))
 		{
-			case "-3"://鲶鱼精+鲶鱼精
-				_logger = new PostNamazuLogger();
-				_logger2 = new PostNamazuLogger();
-				break;
-			case "-2"://鲶鱼精邮差+悬浮窗
-				_logger = new PostNamazuLogger();
-				_logger2 = new TriggernometryLogger();
-				break;
-			case "-1"://鲶鱼精邮差+日志行
-				_logger = new PostNamazuLogger();
-				_logger2 = new TriggernometryLogger();
-				break;
-			case "0"://仅日志行打印重要日志
-				_logger = new TriggernometryLogger();
-				_logger2 = new NoneLogger();
-				break;
-			case "1"://日志行打印全部日志
-				_logger = new TriggernometryLogger();
-				_logger2 = new TriggernometryLogger();
-				break;
-			case "2"://悬浮窗+日志行
-				_logger = new TextAuraLogger();
-				_logger2 = new TriggernometryLogger();
-				break;
-			case "3"://悬浮窗打印全部日志
-				_logger = new TextAuraLogger();
-				_logger2 = new TextAuraLogger();
-				break;
-			default:
-				//回头再说
-				break;
+			_logger = loggerPair.logger;
+			_logger2 = loggerPair.logger2;
+		}
+		else
+		{
+			Log($"日志级别{level}不存在,日志打印方式保持原样");
 		}
 	}
 }
@@ -979,29 +953,19 @@ public interface ILogger
 }
 public class NoneLogger : ILogger//啥都不干
 {
-	public void Log(string msg)
-	{
-		//啥都不干
-	}
+	public void Log(string msg) {}
 }
 public class TriggernometryLogger : ILogger//日志行(高级触发器日志)
 {
-	public void Log(string msg)
-	{
-		StaticHelpers.Log(RealPlugin.DebugLevelEnum.Custom, msg);
-	}
+	public void Log(string msg) => StaticHelpers.Log(RealPlugin.DebugLevelEnum.Custom, msg);
 }
 public class TextAuraLogger : ILogger//悬浮窗
 {
-	public void Log(string msg)
-	{
+	public void Log(string msg) {
 		//回头再写
 	}
 }
 public class PostNamazuLogger : ILogger//鲶鱼精邮差
 {
-	public void Log(string msg)
-	{
-		Triggernometry.RealPlugin.plug.InvokeNamedCallback("command", "/e " + msg);
-	}
+	public void Log(string msg) => Triggernometry.RealPlugin.plug.InvokeNamedCallback("command", "/e " + msg);
 }
