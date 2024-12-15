@@ -369,7 +369,6 @@ public static class AuraCanVTS {
 			}
 			_dv.SetValue(dvKey.ToString(), shortCommandStr);
 		}
-		//Log($"{_handles.ToString()} {_commands.ToString()} {_commandDic.ToString()}");
 	}
 
 	private static void VtsDeleteCommand(Dictionary<string, object> parameters)
@@ -538,9 +537,10 @@ public static class AuraCanDictionary {
 	{
 		//handleNo,name,judgeKey,judgeKey.ToUpper()
 		//每个属性不能同一handleNo出现两次
-		//21行将目标作为主体
-		{ "hp", "24,1,5,6;39,1,2,3;03,1,9,10;04,1,9,10;21,5,22,23" },
 		{ "area", "40,,2" },
+		{ "hp", "24,1,5,6;39,1,2,3;03,1,9,10;04,1,9,10;21,5,22,23" },//21行将目标作为主体
+		{ "skill", "21,1,3" },
+		{ "target", "21,1,5" },
 		{ "areasub", "40,,3" }
 	};
 	public static string[] GetHandleNosByJudgeKey(string judgeKey)
