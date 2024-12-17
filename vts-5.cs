@@ -21,6 +21,17 @@ public static class AuraCanVTS {
 	private static VariableDictionary _dv;//持久变量
 	private static string _playerId;//当前玩家Id
 
+	//被用作回调函数,仅处理start/stop/press
+	private static void Sender(string type, string command)
+	{
+		Dictionary<string, object> strAndPar = CheckCmd(type, command);
+		Dictionary<string, object> parameters = (Dictionary<string, object>)strAndPar["parameters"];
+		string longCmdStr = (string)strAndPar["longCmdStr"];
+		Message msg = new Message(parameters);
+		AuraCanSocket.SendToVTubeStudio(msg.Serialize());
+		Logger.Log(longCmdStr);
+	}
+
 	//该方法仅处理99行以内的网络日志
 	public static void LogProcess(object _, string logString)
 	{
@@ -131,7 +142,11 @@ public static class AuraCanVTS {
 		//注册回调函数
 		if(steps.Contains("e"))
 		{
-			RealPlugin.plug.RegisterNamedCallback(pluginName, new Action<object, string>(AuraCanVTS.LogProcess), null);
+			RealPlugin.plug.RegisterNamedCallback($"{pluginName}", new Action<object, string>(LogProcess), null);
+			RealPlugin.plug.RegisterNamedCallback($"{pluginName}StartSender", (object _, string command) => Sender("start", command), null);
+			RealPlugin.plug.RegisterNamedCallback($"{pluginName}StopSender", (object _, string command) => Sender("stop", command), null);
+			RealPlugin.plug.RegisterNamedCallback($"{pluginName}PressSender", (object _, string command) => Sender("press", command), null);
+			RealPlugin.plug.RegisterNamedCallback($"{pluginName}JsonSender", (object _, string json) => AuraCanSocket.SendToVTubeStudio(json), null);//究极摆烂
 			Logger.Log2($"init e finished");
 		}
 		Logger.Log2($"init finished");
@@ -213,14 +228,9 @@ public static class AuraCanVTS {
 		if(match.Success)
 		{
 			//校验命令(顺便创建payload)
-			Dictionary<string, string> typeAndCommand = new Dictionary<string, string>();
-			typeAndCommand["type"] = match.Groups[1].Value;
-			typeAndCommand["command"] = match.Groups[2].Value;
-			if(!CheckCmd(typeAndCommand, out Dictionary<string, object> strAndPar))
-			{
-				string cmdErrMsg = (string)strAndPar["cmdErrMsg"];
-				Logger.Log($"CheckCmdException {cmdErrMsg}。");
-			}
+			string type = match.Groups[1].Value;
+			string command = match.Groups[2].Value;
+			Dictionary<string, object> strAndPar = CheckCmd(type, command);
 			string longCmdStr = (string)strAndPar["longCmdStr"];
 			string shortCmdStr = (string)strAndPar["shortCmdStr"];
 			String payload = new Message((Dictionary<string, object>)strAndPar["parameters"]).Serialize();
@@ -283,14 +293,9 @@ public static class AuraCanVTS {
 		match = Regex.Match(commandStr, @"^vts(?:\s+execute\s+command\s+that)?\s+(press|start|stop)\s+(.+)$");
 		if(match.Success)
 		{
-			Dictionary<string, string> typeAndCommand = new Dictionary<string, string>();//传入参数
-			typeAndCommand["type"] = match.Groups[1].Value;
-			typeAndCommand["command"] = match.Groups[2].Value;
-			if(!CheckCmd(typeAndCommand, out Dictionary<string, object> strAndPar))//校验命令
-			{
-				string cmdErrMsg = (string)strAndPar["cmdErrMsg"];
-				throw new Exception($"CheckCmdException {cmdErrMsg}。");
-			}
+			string type = match.Groups[1].Value;
+			string command = match.Groups[2].Value;
+			Dictionary<string, object> strAndPar = CheckCmd(type, command);
 			longCommandStr = (string)strAndPar["longCmdStr"];
 			shortCommandStr = (string)strAndPar["shortCmdStr"];
 			parameters = (Dictionary<string, object>)strAndPar["parameters"];
@@ -342,8 +347,8 @@ public static class AuraCanVTS {
 			return CommandTypeEnum.changeLog;
 		}
 
-		longCommandStr = null;
-		shortCommandStr = null;
+		longCommandStr = "vts did not match any usable commands";
+		shortCommandStr = "vts did not match any usable commands";
 		parameters = null;
 		return CommandTypeEnum.donothing;
 	}
@@ -488,14 +493,11 @@ public static class AuraCanVTS {
 		return true;
 	}
 
-	//true表示没问题,out格式化后的;false表示有问题,out异常提示
-	private static bool CheckCmd(Dictionary<string, string> typeAndCommand, out Dictionary<string, object> strAndPar)
+	private static Dictionary<string, object> CheckCmd(string type, string command)
 	{
 		string longCmdStr = "";
 		string shortCmdStr = "";
-		string type = typeAndCommand["type"];
-		string command = typeAndCommand["command"];
-		strAndPar = new Dictionary<string, object>();
+		Dictionary<string, object> strAndPar = new Dictionary<string, object>();
 		Dictionary<string, object> parameters = new Dictionary<string, object>();
 		if(type=="press") //热键
 		{
@@ -523,7 +525,7 @@ public static class AuraCanVTS {
 		strAndPar["longCmdStr"] = longCmdStr;
 		strAndPar["shortCmdStr"] = shortCmdStr;
 		strAndPar["parameters"] = parameters;
-		return true;
+		return strAndPar;
 	}
 }
 
@@ -855,7 +857,8 @@ public enum CommandTypeEnum
 	executecommand, //立刻执行
 	schedular, //调度器
 	changeLog, //修改日志打印方式
-	donothing //啥都不干
+	donothing //啥都不干(无匹配正则)
+	//通过回调直接触发不使用枚举
 }
 
 public enum MessageTypeEnum {
@@ -887,7 +890,7 @@ public static class Logger
 	private static ILogger _logger2;//不太重要的信息(例如非关键提示信息)
 	public static void Log(string msg) => _logger.Log($"{pluginName} {msg}");
 	public static void Log2(string msg) => _logger2.Log($"{pluginName} {msg}");
-	//json字符串全打日志里,否则过于喧嚣
+	//json字符串全打日志里,否则过于喧嚣↓
 	public static void Log3(string msg) => StaticHelpers.Log(RealPlugin.DebugLevelEnum.Custom2, msg);
 	private static readonly Dictionary<string, (ILogger logger, ILogger logger2)> loggers = new()
 	{
