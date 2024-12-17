@@ -19,7 +19,7 @@ public static class AuraCanVTS {
 	private static Schedular _schedular;//定时任务
 	private static Dictionary<string, Handle> _handles;//日志行处理器列表
 	private static VariableDictionary _dv;//持久变量
-	private static string playerName;//当前玩家名称(好像没用?)
+	private static string _playerId;//当前玩家Id
 
 	//该方法仅处理99行以内的网络日志
 	public static void LogProcess(object _, string logString)
@@ -65,13 +65,12 @@ public static class AuraCanVTS {
 		{
 			logString = logString.Substring(37);
 			string[] log = logString.Split('|');
-			_handles[handleNo].Process(log);
-			Logger.Log2($"new log,handleNo:{handleNo}");
+			_handles[handleNo].Process(_playerId, log);
 		}
 		if(handleNo == "02")//更新当前玩家的名称和ID(可能会有更换模型的动作,因此不作为elseif)
 		{
-			playerName = logString.Split('|')[3];
-			Logger.Log2($"player {playerName}");
+			_playerId = logString.Split('|')[2];
+			Logger.Log2($"player {_playerId}");
 		}
 	}
 
@@ -83,6 +82,7 @@ public static class AuraCanVTS {
 			_handles = new Dictionary<string, Handle>();//key为10进制
 			string logLevel = StaticHelpers.GetScalarVariable(true, $"{pluginName}LogLevel") ?? "0";//日志级别,默认0
 			Logger.SetLogger(logLevel);
+			_playerId = Triggernometry.PluginBridges.BridgeFFXIV.PlayerHexId;
 			Logger.Log2($"init a finished");
 		}
 		//初始化websocket链接
@@ -206,8 +206,8 @@ public static class AuraCanVTS {
 			CommandTypeEnum.createcommand:
 				You can trigger hotkeys either by their unique ID or the hotkey name (case-insensitive). 
 			eg:
-				vts create new command that press cl when Raine'hp<90 and area=九号解决方案
-				vts press cl when Raine'hp<90 and area=九号解决方案
+				vts create new command that press cl when hp<90 and area=九号解决方案
+				vts press cl when hp<90 and area=九号解决方案
 		*/
 		match = Regex.Match(commandStr, @"^vts(?:\s+create\s+new\s+command\s+that)?\s+(press|start|stop)\s+(.+)\s+when\s+(.+)$");
 		if(match.Success)
@@ -301,24 +301,22 @@ public static class AuraCanVTS {
 			CommandTypeEnum.schedular:
 				给定时器的字典添加一个值,根据日志行更新,每秒发送一次
 			eg:
-				vts update schedular that set ParamBodyAngleX by Raine's hp
-				vts set ParamBodyAngleX Raine'hp
-				vts update schedular that set ParamBodyAngleX by Raine's %hp
-				vts set ParamBodyAngleX Raine'%hp
+				vts update schedular that set ParamBodyAngleX by hp
+				vts set ParamBodyAngleX hp
+				vts update schedular that set ParamBodyAngleX by %hp
+				vts set ParamBodyAngleX %hp
 		*/
-		match = Regex.Match(commandStr, @"^vts(?:\s+update\s+schedular\s+that)?\s+set\s+([^\s]+)(?:\s+by)?\s+(?:(?:([^\s]+)')?(?:s\s+)?(%)?(\w+))?$");
+		match = Regex.Match(commandStr, @"^vts(?:\s+update\s+schedular\s+that)?\s+set\s+([^\s]+)(?:\s+by)?\s+(?:(%)?(\w+))?$");
 		if(match.Success)
 		{
 			string key = match.Groups[1].Value;//key
-			string name = match.Groups[2].Value;//name
-			string p = match.Groups[3].Value;//%
-			string judgeKey = match.Groups[4].Value;//judgeKey
+			string p = match.Groups[2].Value;//%
+			string judgeKey = match.Groups[3].Value;//judgeKey
 			parameters["key"] = key;
-			parameters["name"] = name;
 			parameters["p"] = p;
 			parameters["judgeKey"] = judgeKey;
-			longCommandStr = $"vts create schedular that set {key} by {name}'s {p}{judgeKey}";
-			shortCommandStr = $"vts set {key} {name}'{p}{judgeKey}";
+			longCommandStr = $"vts create schedular that set {key} by {p}{judgeKey}";
+			shortCommandStr = $"vts set {key} {p}{judgeKey}";
 			return CommandTypeEnum.schedular;
 		}
 
@@ -409,10 +407,9 @@ public static class AuraCanVTS {
 	{
 		//先搓一个judge
 		string key = (string)parameters["key"];
-		string name = (string)parameters["name"];
 		string judgeKey = (string)parameters["judgeKey"];
 		JudgeMethodEnum method = (string)parameters["p"] == "" ? JudgeMethodEnum.alltrue : JudgeMethodEnum.alltruep;
-		Judge judge = new Judge(null, 0, judgeKey, method, key);//只有judgeKey和method有用
+		Judge judge = new Judge(null, 0, judgeKey, method, key);
 		//把judge放进去
 		foreach(string handleNo in AuraCanDictionary.GetHandleNosByJudgeKey(judgeKey))
 		{
@@ -422,7 +419,7 @@ public static class AuraCanVTS {
 				{
 					_handles[handleNo] = new Handle(handleNo);
 				}
-				_handles[handleNo].AddJudge(name, judge);
+				_handles[handleNo].AddJudge(judge);
 			}
 		}
 		//存入持久化变量
@@ -451,30 +448,28 @@ public static class AuraCanVTS {
 		judges = new Judge[partsLength];
 		for(int i=0; i<partsLength; i++)
 		{
-			Match match = Regex.Match(parts[i], @"^(?:(\w+)')?(\w+)([><=!]+)([\.\w]+)(%)?$");
+			Match match = Regex.Match(parts[i], @"^(\w+)([><=!]+)([\.\w]+)(%)?$");
 			
-			string name = match.Groups[1].Value;
-			string judgeKey = match.Groups[2].Value;
-			string sign = match.Groups[3].Value;
+			string judgeKey = match.Groups[1].Value;
+			string sign = match.Groups[2].Value;
 			JudgeMethodEnum method;
 			object val;
-			//AuraCanVTS.Log($"2.{judgeKey} {sign}");
 			if(sign.Contains("="))
 			{
 				method = sign == "=" ? JudgeMethodEnum.eq : JudgeMethodEnum.ne;//=和!=
-				val = match.Groups[4].Value;
+				val = match.Groups[3].Value;
 			}
 			else
 			{
-				if(!"".Equals(match.Groups[5]))//匹配到了%
+				if(!"".Equals(match.Groups[4]))//匹配到了%
 				{
-					method = match.Groups[3].Value == "<"? JudgeMethodEnum.ltp : JudgeMethodEnum.gtp;//<%和>%
+					method = match.Groups[2].Value == "<"? JudgeMethodEnum.ltp : JudgeMethodEnum.gtp;//<%和>%
 				}
 				else
 				{
-					method = match.Groups[3].Value == "<"? JudgeMethodEnum.lt : JudgeMethodEnum.gt;//<和>
+					method = match.Groups[2].Value == "<"? JudgeMethodEnum.lt : JudgeMethodEnum.gt;//<和>
 				}
-				val = double.Parse(match.Groups[4].Value);
+				val = double.Parse(match.Groups[3].Value);
 			}
 			Judge judge = new Judge(executer, i, judgeKey, method, val);
 			foreach(string handleNo in AuraCanDictionary.GetHandleNosByJudgeKey(judgeKey))
@@ -485,7 +480,7 @@ public static class AuraCanVTS {
 					{
 						_handles[handleNo] = new Handle(handleNo);
 					}
-					_handles[handleNo].AddJudge(name, judge);
+					_handles[handleNo].AddJudge(judge);
 				}
 			}
 			judges[i] = judge;
@@ -535,12 +530,12 @@ public static class AuraCanVTS {
 public static class AuraCanDictionary {
 	private static Dictionary<string, string> _commandDic = new Dictionary<string, string>//日志字段字典
 	{
-		//handleNo,name,judgeKey,judgeKey.ToUpper()
+		//handleNo,id,judgeKey,judgeKey.ToUpper()
 		//每个属性不能同一handleNo出现两次
 		{ "area", "40,,2" },
-		{ "hp", "03,1,9,10;04,1,9,10;21,1,32,33;24,1,5,6;39,1,2,3" },
-		{ "skill", "21,1,3" },
-		{ "target", "21,1,5" },
+		{ "hp", "03,0,9,10;04,0,9,10;21,0,32,33;24,0,5,6;39,0,2,3" },
+		{ "skill", "21,0,3" },
+		{ "target", "21,0,5" },
 		{ "areasub", "40,,3" }
 	};
 	public static string[] GetHandleNosByJudgeKey(string judgeKey)
@@ -554,7 +549,7 @@ public static class AuraCanDictionary {
 		}
 		return noList.ToArray();
 	}
-	public static int GetNameIndexByHandleNo(string handleNo)
+	public static int GetIdIndexByHandleNo(string handleNo)
 	{
 		foreach(string commandInfo in _commandDic.Values)
 		{
@@ -564,11 +559,11 @@ public static class AuraCanDictionary {
 				string[] pars = handle.Split(',');
 				if(handleNo == pars[0])
 				{
-					return pars[1] == "" ? 0 : int.Parse(pars[1]);
+					return pars[1] == "" ? -1 : int.Parse(pars[1]);
 				}
 			}
 		}
-		return 0;//0表示日志无实体字段
+		return -1;//-1表示日志无实体字段
 	}
 	public static Dictionary<string, int> GetParsIndexByHandleNo(string handleNo)
 	{
@@ -595,66 +590,37 @@ public static class AuraCanDictionary {
 
 public class Handle
 {
-	private Dictionary<string, List<Judge>> _judges; //不同实体的判断列表
+	private List<Judge> _judges; //不同实体的判断列表
 	private Dictionary<string, int> _parsIndex; //参数,位于日志中第几个
-	private int _nameIndex;//日志中第几个字段是实体的名字
+	private int _idIndex;//日志中第几个字段是实体的名字
 	private string _handleNo;//日志行序号
 	public Handle(string handleNo)
 	{
-		_judges = new Dictionary<string, List<Judge>>();
+		_judges = new List<Judge>();
 		_parsIndex = AuraCanDictionary.GetParsIndexByHandleNo(handleNo);
-		_nameIndex = AuraCanDictionary.GetNameIndexByHandleNo(handleNo);
+		_idIndex = AuraCanDictionary.GetIdIndexByHandleNo(handleNo);
 		_handleNo = handleNo;
 	}
-	public void AddJudge(string name, Judge judge)
+	public void AddJudge(Judge judge) => _judges.Add(judge);
+	public void Process(string playerId, string[] log)
 	{
-		lock(_judges)
+		if(_idIndex != -1 && playerId != log[_idIndex])
 		{
-			if(_judges.ContainsKey(name))
-			{
-				_judges[name].Add(judge);
-			}
-			else
-			{
-				List<Judge> judgeList = new List<Judge>();
-				judgeList.Add(judge);
-				_judges.Add(name, judgeList);
-			}
-		}
-	}
-	public void Process(string[] log)
-	{
-		bool theEntitieFlag = _nameIndex != 0 && _judges.ContainsKey(log[_nameIndex]);//存在特定实体判断列表
-		bool anyEntitieFlag = _judges.ContainsKey("");//存在任意实体判断列表
-		if(!theEntitieFlag && !anyEntitieFlag)
-		{
+			Logger.Log2($"try {_idIndex} {playerId} {log[_idIndex]}");
 			return;
 		}
 		//有处理的必要才解析
 		Dictionary<string, string> pars = new Dictionary<string, string>();
-		pars.Add("name", _nameIndex == 0 ? "" : log[_nameIndex]); //有名字就把名字塞进去
 		foreach(KeyValuePair<string, int> kvp in _parsIndex)
 		{
 			pars.Add(kvp.Key,log[kvp.Value]);
-			Logger.Log2($"Handle{_handleNo} add par:{kvp.Key} {log[kvp.Value]}");
 		}
-		if(theEntitieFlag)//特定实体的判断列表
+		string allAddPars = String.Join(",", pars.Select(kvp => $"{kvp.Key} {kvp.Value}"));
+		Logger.Log2($"Handle{_handleNo} add par:{allAddPars}");
+		for(int i = 0; i < _judges.Count; i++)
 		{
-			List<Judge> judges = _judges[log[_nameIndex]];
-			for(int i = 0; i < judges.Count; i++)
-			{
-				Logger.Log2($"handleNo:{_handleNo}'s judge,entityname {log[_nameIndex]}, {i+1}/{judges.Count}");
-				judges[i].Process(pars);
-			}
-		}
-		if(anyEntitieFlag)//任意实体的判断列表
-		{
-			List<Judge> judges = _judges[""];
-			for(int i = 0; i < judges.Count; i++)
-			{
-				Logger.Log2($"handleNo:{_handleNo}'s judge, all entity, {i+1}/{judges.Count}");
-				judges[i].Process(pars);
-			}
+			Logger.Log2($"handleNo:{_handleNo}'s judge, {i+1}/{_judges.Count}");
+			_judges[i].Process(pars);
 		}
 	}
 }
