@@ -29,7 +29,7 @@ public static class AuraCanVTS {
 		string longCmdStr = (string)strAndPar["longCmdStr"];
 		Message msg = new Message(parameters);
 		AuraCanSocket.SendToVTubeStudio(msg.Serialize());
-		Logger.Log(longCmdStr);
+		Logger.Log2(longCmdStr);
 	}
 
 	//该方法仅处理99行以内的网络日志
@@ -76,11 +76,12 @@ public static class AuraCanVTS {
 		{
 			logString = logString.Substring(37);
 			string[] log = logString.Split('|');
-			_handles[handleNo].Process(_playerId, log);
+			_handles[handleNo].HandleProcess(_playerId, log);
 		}
 		if(handleNo == "02")//更新当前玩家的名称和ID(可能会有更换模型的动作,因此不作为elseif)
 		{
 			_playerId = logString.Split('|')[2];
+			StaticHelpers.SetScalarVariable(true, $"{pluginName}PlayerId", _playerId);
 			Logger.Log2($"player {_playerId}");
 		}
 	}
@@ -93,8 +94,8 @@ public static class AuraCanVTS {
 			_handles = new Dictionary<string, Handle>();//key为10进制
 			string logLevel = StaticHelpers.GetScalarVariable(true, $"{pluginName}LogLevel") ?? "0";//日志级别,默认0
 			Logger.SetLogger(logLevel);
-			_playerId = Triggernometry.PluginBridges.BridgeFFXIV.PlayerHexId;
-			Logger.Log2($"init a finished");
+			_playerId = StaticHelpers.GetScalarVariable(true, $"{pluginName}PlayerId") ?? "";
+			Logger.Log2($"init a finished,playerId is {_playerId}");
 		}
 		//初始化websocket链接
 		if(steps.Contains("b"))
@@ -135,7 +136,7 @@ public static class AuraCanVTS {
 						VtsCreateCommand("", parameters);
 					}
 				}
-				Logger.Log($"rebuild {_dv.Size} command(s)");
+				Logger.Log2($"rebuild {_dv.Size} command(s)");
 			}
 			Logger.Log2($"init d finished");
 		}
@@ -535,10 +536,14 @@ public static class AuraCanDictionary {
 		//handleNo,id,judgeKey,judgeKey.ToUpper()
 		//每个属性不能同一handleNo出现两次
 		{ "area", "40,,2" },
+		{ "areasub", "40,,3" },
+		{ "buff", "26,5,1;30,5,1" },//"自己"被附加或移除状态
+		{ "buffadd", "26,5,1" },//"自己"被附加状态
+		{ "buffremove", "30,5,1" },//"自己"被移除状态
 		{ "hp", "03,0,9,10;04,0,9,10;21,0,32,33;24,0,5,6;39,0,2,3" },
-		{ "skill", "21,0,3" },
-		{ "target", "21,0,5" },
-		{ "areasub", "40,,3" }
+		{ "mp", "03,0,11,12;04,0,11,12;21,0,34,35;24,0,7,8;39,0,4,5" },
+		{ "skill", "21,0,3;22,0,3" },//"自己"释放技能
+		{ "target", "21,0,5" }//"自己"对目标释放了技能
 	};
 	public static string[] GetHandleNosByJudgeKey(string judgeKey)
 	{
@@ -604,11 +609,10 @@ public class Handle
 		_handleNo = handleNo;
 	}
 	public void AddJudge(Judge judge) => _judges.Add(judge);
-	public void Process(string playerId, string[] log)
+	public void HandleProcess(string playerId, string[] log)
 	{
 		if(_idIndex != -1 && playerId != log[_idIndex])
 		{
-			Logger.Log2($"try {_idIndex} {playerId} {log[_idIndex]}");
 			return;
 		}
 		//有处理的必要才解析
@@ -622,7 +626,7 @@ public class Handle
 		for(int i = 0; i < _judges.Count; i++)
 		{
 			Logger.Log2($"handleNo:{_handleNo}'s judge, {i+1}/{_judges.Count}");
-			_judges[i].Process(pars);
+			_judges[i].JudgeProcess(pars);
 		}
 	}
 }
@@ -650,7 +654,7 @@ public class Judge
 			_strVal = (string) val;
 		}
 	}
-	public void Process(Dictionary<string, string> pars)
+	public void JudgeProcess(Dictionary<string, string> pars)
 	{
 		double percent;
 		switch(_method)
@@ -804,7 +808,7 @@ public static class AuraCanSocket {
 		}
 	}
 	private static void Authenticate() {
-		string token = StaticHelpers.GetScalarVariable(true, "ACtoken") ?? "";
+		string token = StaticHelpers.GetScalarVariable(true, $"{pluginName}Token") ?? "";
 		MessageTypeEnum type;
 		Dictionary<string, object> parameters = new Dictionary<string, object>();
 		if (token == "") {
@@ -825,19 +829,19 @@ public static class AuraCanSocket {
 		if (json.Contains("errorID")) {
 			string errorId = GetValueFromJson(json, "errorID");
 			if (errorId == "50" || errorId == "8") {
-				StaticHelpers.SetScalarVariable(true, "ACtoken", "");
+				StaticHelpers.SetScalarVariable(true, $"{pluginName}Token", "");
 			}
 			Logger.Log($"error:{json}");
 		}
 		if (json.Contains("authenticationToken")) {
 			string token = GetValueFromJson(json, "authenticationToken");
 			Logger.Log($"get and saved token");
-			StaticHelpers.SetScalarVariable(true, "ACtoken", token);
+			StaticHelpers.SetScalarVariable(true, $"{pluginName}Token", token);
 			Authenticate();
 		} else if (json.Contains("authenticated")) {
 			if (GetValueFromJson(json, "authenticated") == "false") {
 				Logger.Log($"lost token and try to re authenticate");
-				StaticHelpers.SetScalarVariable(true, "ACtoken", "");
+				StaticHelpers.SetScalarVariable(true, $"{pluginName}Token", "");
 				Authenticate();
 			}
 		}
@@ -888,19 +892,23 @@ public static class Logger
 {
 	private static ILogger _logger;//重要信息(例如报错和关键提示信息)
 	private static ILogger _logger2;//不太重要的信息(例如非关键提示信息)
+	private static ILogger _logger3;//完全不重要的信息(发送的和接收的)
 	public static void Log(string msg) => _logger.Log($"{pluginName} {msg}");
 	public static void Log2(string msg) => _logger2.Log($"{pluginName} {msg}");
-	//json字符串全打日志里,否则过于喧嚣↓
-	public static void Log3(string msg) => StaticHelpers.Log(RealPlugin.DebugLevelEnum.Custom2, msg);
-	private static readonly Dictionary<string, (ILogger logger, ILogger logger2)> loggers = new()
+	public static void Log3(string msg) => _logger3.Log($"{pluginName} {msg}");
+	private static PostNamazuLogger _postNamazuLogger = new PostNamazuLogger();//鲶鱼精
+	private static TextAuraLogger _textAuraLogger = new TextAuraLogger();//悬浮窗
+	private static TriggernometryLogger _triggernometryLogger = new TriggernometryLogger();//日志行
+	private static NoneLogger _noneLogger = new NoneLogger();//啥也不干
+	private static readonly Dictionary<string, (ILogger logger, ILogger logger2, ILogger logger3)> loggers = new()
 	{
-		["-3"] = (new PostNamazuLogger(), new PostNamazuLogger()), //鲶鱼精+鲶鱼精
-		["-2"] = (new PostNamazuLogger(), new TextAuraLogger()), //鲶鱼精邮差+悬浮窗
-		["-1"] = (new PostNamazuLogger(), new TriggernometryLogger()), //鲶鱼精邮差+日志行
-		["0"] = (new TriggernometryLogger(), new NoneLogger()), //仅日志行打印重要日志
-		["1"] = (new TriggernometryLogger(), new TriggernometryLogger()), //日志行打印全部日志
-		["2"] = (new TextAuraLogger(), new TriggernometryLogger()), //悬浮窗+日志行
-		["3"] = (new TextAuraLogger(), new TextAuraLogger()), //悬浮窗打印全部日志
+		["-3"] = (_postNamazuLogger, _postNamazuLogger, _triggernometryLogger), //鲶鱼精邮差+鲶鱼精邮差+日志行
+		["-2"] = (_postNamazuLogger, _triggernometryLogger, _triggernometryLogger), //鲶鱼精邮差+日志行+日志行
+		["-1"] = (_postNamazuLogger, _triggernometryLogger, _noneLogger), //鲶鱼精邮差+日志行+啥也不干
+		["0"] = (_triggernometryLogger, _noneLogger, _noneLogger), //仅日志行打印重要日志
+		["1"] = (_textAuraLogger, _triggernometryLogger, _noneLogger), //悬浮窗+日志行+啥也不干
+		["2"] = (_textAuraLogger, _triggernometryLogger, _triggernometryLogger), //悬浮窗+日志行+日志行
+		["3"] = (_textAuraLogger, _textAuraLogger, _triggernometryLogger), //悬浮窗+悬浮窗+日志行
 	};
 	public static void SetLogger(string level)//数字绝对值越大日志越多,负数区间分给鲶鱼精邮差
 	{
@@ -909,6 +917,7 @@ public static class Logger
 		{
 			_logger = loggerPair.logger;
 			_logger2 = loggerPair.logger2;
+			_logger3 = loggerPair.logger3;
 		}
 		else
 		{
@@ -930,8 +939,27 @@ public class TriggernometryLogger : ILogger//日志行(高级触发器日志)
 }
 public class TextAuraLogger : ILogger//悬浮窗
 {
+	private static Triggernometry.Action _logAuraAction;
+	public TextAuraLogger()
+	{
+		_logAuraAction = new Triggernometry.Action();
+		_logAuraAction.ActionType = Triggernometry.Action.ActionTypeEnum.TextAura.ToString();
+		_logAuraAction.AuraOp = Triggernometry.Action.AuraOpEnum.DeactivateAura.ToString();
+		_logAuraAction.TextAuraName = pluginName;
+		_logAuraAction.TextAuraAlignment = "TopLeft";
+		_logAuraAction.TextAuraFontSize = "15";
+		_logAuraAction.TextAuraXIniExpression = "0";
+		_logAuraAction.TextAuraYIniExpression = "0";
+		_logAuraAction.TextAuraWIniExpression = "1000";
+		_logAuraAction.TextAuraHIniExpression = "1500";
+		_logAuraAction.TextAuraOIniExpression = "100";
+		_logAuraAction.TextAuraFontName = "Microsoft YaHei";
+		_logAuraAction.TextAuraOutline = "#0080FF";
+		_logAuraAction.TextAuraForeground = "White";
+	}
 	public void Log(string msg) {
-		//回头再写
+		_logAuraAction.TextAuraExpression = msg;
+		//Triggernometry.RealPlugin.QueueAction(ctx, ctx.trig, null, _logAuraAction, System.DateTime.Now, true);
 	}
 }
 public class PostNamazuLogger : ILogger//鲶鱼精邮差
