@@ -897,18 +897,18 @@ public static class Logger
 	public static void Log2(string msg) => _logger2.Log($"{pluginName} {msg}");
 	public static void Log3(string msg) => _logger3.Log($"{pluginName} {msg}");
 	private static PostNamazuLogger _postNamazuLogger = new PostNamazuLogger();//鲶鱼精
-	private static TextAuraLogger _textAuraLogger = new TextAuraLogger();//悬浮窗
-	private static TriggernometryLogger _triggernometryLogger = new TriggernometryLogger();//日志行
+	private static TriggernometryLogger _triggernometryLogger = new TriggernometryLogger();//用户日志1
+	private static TriggernometryLogger2 _triggernometryLogger2 = new TriggernometryLogger2();//用户日志2
 	private static NoneLogger _noneLogger = new NoneLogger();//啥也不干
 	private static readonly Dictionary<string, (ILogger logger, ILogger logger2, ILogger logger3)> loggers = new()
 	{
-		["-3"] = (_postNamazuLogger, _postNamazuLogger, _triggernometryLogger), //鲶鱼精邮差+鲶鱼精邮差+日志行
-		["-2"] = (_postNamazuLogger, _triggernometryLogger, _triggernometryLogger), //鲶鱼精邮差+日志行+日志行
-		["-1"] = (_postNamazuLogger, _triggernometryLogger, _noneLogger), //鲶鱼精邮差+日志行+啥也不干
-		["0"] = (_triggernometryLogger, _noneLogger, _noneLogger), //仅日志行打印重要日志
-		["1"] = (_textAuraLogger, _triggernometryLogger, _noneLogger), //悬浮窗+日志行+啥也不干
-		["2"] = (_textAuraLogger, _triggernometryLogger, _triggernometryLogger), //悬浮窗+日志行+日志行
-		["3"] = (_textAuraLogger, _textAuraLogger, _triggernometryLogger), //悬浮窗+悬浮窗+日志行
+		["-3"] = (_postNamazuLogger, _postNamazuLogger, _triggernometryLogger2), //鲶鱼精邮差+鲶鱼精邮差+用户日志2
+		["-2"] = (_postNamazuLogger, _triggernometryLogger, _triggernometryLogger2), //鲶鱼精邮差+用户日志1+用户日志2
+		["-1"] = (_postNamazuLogger, _triggernometryLogger, _noneLogger), //鲶鱼精邮差+用户日志1+啥也不干
+		["0"] = (_noneLogger, _noneLogger, _noneLogger), //完全不打印日志
+		["1"] = (_triggernometryLogger, _noneLogger, _noneLogger), //用户日志1+啥也不干+啥也不干
+		["2"] = (_triggernometryLogger, _triggernometryLogger, _noneLogger), //用户日志1+用户日志2+啥也不干
+		["3"] = (_triggernometryLogger, _triggernometryLogger, _triggernometryLogger2), //用户日志1+用户日志1+用户日志2
 	};
 	public static void SetLogger(string level)//数字绝对值越大日志越多,负数区间分给鲶鱼精邮差
 	{
@@ -933,34 +933,13 @@ public class NoneLogger : ILogger//啥都不干
 {
 	public void Log(string msg) {}
 }
-public class TriggernometryLogger : ILogger//日志行(高级触发器日志)
+public class TriggernometryLogger : ILogger//日志行(高级触发器用户日志)
 {
 	public void Log(string msg) => StaticHelpers.Log(RealPlugin.DebugLevelEnum.Custom, msg);
 }
-public class TextAuraLogger : ILogger//悬浮窗
+public class TriggernometryLogger2 : ILogger//日志行(高级触发器用户2日志)
 {
-	private static Triggernometry.Action _logAuraAction;
-	public TextAuraLogger()
-	{
-		_logAuraAction = new Triggernometry.Action();
-		_logAuraAction.ActionType = Triggernometry.Action.ActionTypeEnum.TextAura.ToString();
-		_logAuraAction.AuraOp = Triggernometry.Action.AuraOpEnum.DeactivateAura.ToString();
-		_logAuraAction.TextAuraName = pluginName;
-		_logAuraAction.TextAuraAlignment = "TopLeft";
-		_logAuraAction.TextAuraFontSize = "15";
-		_logAuraAction.TextAuraXIniExpression = "0";
-		_logAuraAction.TextAuraYIniExpression = "0";
-		_logAuraAction.TextAuraWIniExpression = "1000";
-		_logAuraAction.TextAuraHIniExpression = "1500";
-		_logAuraAction.TextAuraOIniExpression = "100";
-		_logAuraAction.TextAuraFontName = "Microsoft YaHei";
-		_logAuraAction.TextAuraOutline = "#0080FF";
-		_logAuraAction.TextAuraForeground = "White";
-	}
-	public void Log(string msg) {
-		_logAuraAction.TextAuraExpression = msg;
-		//Triggernometry.RealPlugin.QueueAction(ctx, ctx.trig, null, _logAuraAction, System.DateTime.Now, true);
-	}
+	public void Log(string msg) => StaticHelpers.Log(RealPlugin.DebugLevelEnum.Custom2, msg);
 }
 public class PostNamazuLogger : ILogger//鲶鱼精邮差
 {
