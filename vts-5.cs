@@ -329,7 +329,7 @@ public static class AuraCanVTS {
 		/*
 			CommandTypeEnum.changeLog:
 				改变日志级别.0为默认,负数为鲶鱼精邮差相关的输出方式
-				数字的绝对值越大,看的时候越容易感到头疼,详见Logger类
+				数字的绝对值越大,打印的日志越多,详见Logger类
 			eg:
 				vts change log level 0
 				vts log 0
@@ -455,7 +455,6 @@ public static class AuraCanVTS {
 		for(int i=0; i<partsLength; i++)
 		{
 			Match match = Regex.Match(parts[i], @"^(\w+)([><=!]+)([\.\w]+)(%)?$");
-			
 			string judgeKey = match.Groups[1].Value;
 			string sign = match.Groups[2].Value;
 			JudgeMethodEnum method;
@@ -476,6 +475,10 @@ public static class AuraCanVTS {
 					method = match.Groups[2].Value == "<"? JudgeMethodEnum.lt : JudgeMethodEnum.gt;//<和>
 				}
 				val = double.Parse(match.Groups[3].Value);
+			}
+			if(judgeKey == "job")
+			{
+				val = AuraCanDictionary.GetJobIdByJobName((string)val);
 			}
 			Judge judge = new Judge(executer, i, judgeKey, method, val);
 			foreach(string handleNo in AuraCanDictionary.GetHandleNosByJudgeKey(judgeKey))
@@ -531,19 +534,50 @@ public static class AuraCanVTS {
 }
 
 public static class AuraCanDictionary {
+	private static Dictionary<string, string> _jobDic = new List<string>//职业字典
+	{
+		//逗号分割,第一个值为日志中的id,其余的值为可供输入的选项
+		//防护职业
+		"13,骑士","15,战士","20,暗黑骑士,黑骑","25,绝枪战士,绝枪,枪刃",
+		"01,剑术师","03,斧术师",
+		//治疗职业
+		"18,白魔法师,白魔","1C,学者","21,占星术士,占星","28,贤者",
+		"06,幻术师",
+		//近战职业
+		"14,武僧","16,龙骑士","1E,忍者","22,武士","27,钐镰客,镰刀","29,蝰蛇剑士",
+		"02,格斗家","04,枪术师","1D,双剑师",
+		//远程物理职业
+		"17,吟游诗人,诗人","1F,机工士,机工","26,舞者",
+		"05,弓箭手",
+		//远程魔法职业
+		"19,黑魔法师,黑魔","1B,召唤师,召唤","23,赤魔法师,赤魔","2A,绘灵法师,画家","24,青魔法师,青魔",
+		"07,咒术师","1A,秘术师",
+		//能工巧匠
+		"08,刻木匠","09,锻铁匠","0A,铸甲匠","0B,雕金匠","0C,制革匠","0D,裁衣匠","0E,炼金术士","0F,烹调师",
+		//大地使者
+		"10,采矿工","11,园艺工","12,捕鱼人"
+	}.Select(keyValueString => keyValueString.Split(','))
+		.Select(parts => new { Value = parts[0], Keys = parts.Skip(1) })
+		.SelectMany(x => x.Keys.Select(key => new { Value = x.Value, Key = key }))
+		.ToDictionary(x => x.Key, x => x.Value);
+	public static string GetJobIdByJobName(string jobName)
+	{
+		return _jobDic[jobName] == null ? jobName : _jobDic[jobName];
+	}
 	private static Dictionary<string, string> _commandDic = new Dictionary<string, string>//日志字段字典
 	{
 		//handleNo,id,judgeKey,judgeKey.ToUpper()
 		//每个属性不能同一handleNo出现两次
-		{ "area", "40,,2" },
+		{ "area", "40,,2" },//如"九号解决方案"
 		{ "areasub", "40,,3" },
 		{ "buff", "26,5,1;30,5,1" },//"自己"被附加或移除状态
 		{ "buffadd", "26,5,1" },//"自己"被附加状态
 		{ "buffremove", "30,5,1" },//"自己"被移除状态
 		{ "hp", "03,0,9,10;04,0,9,10;21,0,32,33;24,0,5,6;39,0,2,3" },
+		{ "job", "03,0,2" },
 		{ "mp", "03,0,11,12;04,0,11,12;21,0,34,35;24,0,7,8;39,0,4,5" },
 		{ "skill", "21,0,3;22,0,3" },//"自己"释放技能
-		{ "target", "21,0,5" }//"自己"对目标释放了技能
+		{ "target", "21,0,5" }//被自己使用了技能的目标
 	};
 	public static string[] GetHandleNosByJudgeKey(string judgeKey)
 	{
@@ -697,6 +731,7 @@ public class Schedular //定时器
 	private static System.Threading.Timer _timer;
 	private static Dictionary<string, object> _setValDic;//key为自定义参数,value的格式为double
 	private static int _count;//每秒一次日志太频繁了,加个计数器
+	private static bool _sendFlag = false;//有额外发送则将值设为true,防止单周期发送大于2次
 	public Schedular()
 	{
 		StaticHelpers.Storage.TryGetValue($"{pluginName}Timer", out object timerObj);
@@ -710,9 +745,19 @@ public class Schedular //定时器
 		_setValDic = new Dictionary<string, object>();
 	}
 	public static void StopSchedular() => _timer.Dispose();
-	public static void UpdateValue(string key, double val) => _setValDic[key] = val;
-	private static void SendSetMsg(object status)
+	public static void UpdateValue(string key, double val)
 	{
+		_setValDic[key] = val;
+		if(!_sendFlag)
+		{
+			_sendFlag = true;
+			SendSetMsg(null);//缩短响应时间,有值修改立即发送一下
+			Logger.Log2($"value {key} has changed, send immediately");
+		}
+	}
+	private static void SendSetMsg(object _)
+	{
+		_sendFlag = false;
 		if(_count-- == 0)
 		{
 			string allSetPars = String.Join(",", _setValDic.Select(pair => $"{pair.Key}"));
@@ -897,6 +942,7 @@ public static class Logger
 	public static void Log2(string msg) => _logger2.Log($"{pluginName} {msg}");
 	public static void Log3(string msg) => _logger3.Log($"{pluginName} {msg}");
 	private static PostNamazuLogger _postNamazuLogger = new PostNamazuLogger();//鲶鱼精
+	private static TextAuraLogger _textAuraLogger = new TextAuraLogger();//文本悬浮窗
 	private static TriggernometryLogger _triggernometryLogger = new TriggernometryLogger();//用户日志1
 	private static TriggernometryLogger2 _triggernometryLogger2 = new TriggernometryLogger2();//用户日志2
 	private static NoneLogger _noneLogger = new NoneLogger();//啥也不干
@@ -907,8 +953,9 @@ public static class Logger
 		["-1"] = (_postNamazuLogger, _triggernometryLogger, _noneLogger), //鲶鱼精邮差+用户日志1+啥也不干
 		["0"] = (_noneLogger, _noneLogger, _noneLogger), //完全不打印日志
 		["1"] = (_triggernometryLogger, _noneLogger, _noneLogger), //用户日志1+啥也不干+啥也不干
-		["2"] = (_triggernometryLogger, _triggernometryLogger, _noneLogger), //用户日志1+用户日志2+啥也不干
+		["2"] = (_triggernometryLogger, _triggernometryLogger2, _noneLogger), //用户日志1+用户日志2+啥也不干
 		["3"] = (_triggernometryLogger, _triggernometryLogger, _triggernometryLogger2), //用户日志1+用户日志1+用户日志2
+		//文本悬浮窗有问题["4"] = (_textAuraLogger, _textAuraLogger, _textAuraLogger), //文本悬浮窗+文本悬浮窗+文本悬浮窗
 	};
 	public static void SetLogger(string level)//数字绝对值越大日志越多,负数区间分给鲶鱼精邮差
 	{
@@ -940,6 +987,32 @@ public class TriggernometryLogger : ILogger//日志行(高级触发器用户日�
 public class TriggernometryLogger2 : ILogger//日志行(高级触发器用户2日志)
 {
 	public void Log(string msg) => StaticHelpers.Log(RealPlugin.DebugLevelEnum.Custom2, msg);
+}
+public class TextAuraLogger : ILogger//文本悬浮窗(目前有问题)
+{
+	private static Triggernometry.Action _logAuraAction;
+	public TextAuraLogger()
+	{
+		_logAuraAction = new Triggernometry.Action();
+		_logAuraAction.ActionType = Triggernometry.Action.ActionTypeEnum.TextAura.ToString();
+		_logAuraAction.AuraOp = Triggernometry.Action.AuraOpEnum.DeactivateAura.ToString();
+		_logAuraAction.TextAuraName = pluginName;
+		_logAuraAction.TextAuraAlignment = "TopLeft";
+		_logAuraAction.TextAuraFontSize = "15";
+		_logAuraAction.TextAuraXIniExpression = "0";
+		_logAuraAction.TextAuraYIniExpression = "0";
+		_logAuraAction.TextAuraWIniExpression = "1000";
+		_logAuraAction.TextAuraHIniExpression = "1500";
+		_logAuraAction.TextAuraOIniExpression = "100";
+		_logAuraAction.TextAuraFontName = "Microsoft YaHei";
+		_logAuraAction.TextAuraOutline = "#0080FF";
+		_logAuraAction.TextAuraForeground = "White";
+	}
+	public void Log(string msg) {
+		_logAuraAction.TextAuraExpression = msg;
+		Context ctx = new Context();
+		Triggernometry.RealPlugin.plug.QueueAction(ctx, ctx.trig, null, _logAuraAction, System.DateTime.Now, true);
+	}
 }
 public class PostNamazuLogger : ILogger//鲶鱼精邮差
 {
