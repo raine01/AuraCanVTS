@@ -86,6 +86,12 @@ public static class AuraCanVTS {
 		}
 	}
 
+	//把_handles重新初始化就不会再发请求了
+	public static void DestoryHandles()
+	{
+		_handles = new Dictionary<string, Handle>();
+	}
+
 	public static void Init(string steps)
 	{
 		//初始化类
@@ -256,8 +262,12 @@ public static class AuraCanVTS {
 			eg:
 				vts delete command 1
 				vts del 1
+				vts delete command 0,1,2,3,4,5,8,9,10,11
+				vts del 0,1,2,3,4,5,8,9,10,11
+				vts delete command all
+				vts del all
 		*/
-		match = Regex.Match(commandStr, @"^vts\s+del(?:ete)?(?:\s+command)?\s+([A-Za-z0-9]{1,3})$");//要是1000个指令依旧不够用,会开放字符作为序号
+		match = Regex.Match(commandStr, @"^vts\s+del(?:ete)?(?:\s+command)?\s+([A-Za-z0-9]{1,3}(?:,[A-Za-z0-9]{1,3})*)$");
 		if(match.Success)
 		{
 			string commandIndex = match.Groups[1].Value;
@@ -288,8 +298,6 @@ public static class AuraCanVTS {
 			eg:
 				vts execute command that press cl
 				vts press cl
-				vts execute command that set FaceAngleX=10, FaceAngleY=50 weight 0.8, FaceAngleZ=-10
-				vts set FaceAngleX=10 FaceAngleY=50 weight 0.8 FaceAngleZ=-10
 		*/
 		match = Regex.Match(commandStr, @"^vts(?:\s+execute\s+command\s+that)?\s+(press|start|stop)\s+(.+)$");
 		if(match.Success)
@@ -373,9 +381,19 @@ public static class AuraCanVTS {
 
 	private static void VtsDeleteCommand(Dictionary<string, object> parameters)
 	{
-		//直接删除持久变量然后重新初始化
-		string commandIndex = (string)parameters["commandIndex"];
-		_dv.RemoveKey(commandIndex, pluginName);
+		string commandIndexString = (string)parameters["commandIndex"];
+		if(commandIndexString == "all") //删除全部
+		{
+			StaticHelpers.SetDictVariable(true, pluginName, new VariableDictionary());
+		}
+		else //删除部分
+		{
+			string[] commandIndexArray = commandIndexString.Split(',');
+			foreach(string commandIndex in commandIndexArray)
+			{
+			    _dv.RemoveKey(commandIndex, pluginName);
+			}
+		}
 		Init("acd");
 	}
 
@@ -425,7 +443,10 @@ public static class AuraCanVTS {
 				{
 					_handles[handleNo] = new Handle(handleNo);
 				}
-				_handles[handleNo].AddJudge(judge);
+				lock(_handles[handleNo])
+				{
+					_handles[handleNo].AddJudge(judge);
+				}
 			}
 		}
 		//存入持久化变量
@@ -476,7 +497,7 @@ public static class AuraCanVTS {
 				}
 				val = double.Parse(match.Groups[3].Value);
 			}
-			if(judgeKey == "job")
+			if(judgeKey == "job" || judgeKey == "anyjob" )
 			{
 				val = AuraCanDictionary.GetJobIdByJobName((string)val);
 			}
@@ -489,7 +510,10 @@ public static class AuraCanVTS {
 					{
 						_handles[handleNo] = new Handle(handleNo);
 					}
-					_handles[handleNo].AddJudge(judge);
+					lock(_handles[handleNo])
+					{
+						_handles[handleNo].AddJudge(judge);
+					}
 				}
 			}
 			judges[i] = judge;
@@ -567,14 +591,20 @@ public static class AuraCanDictionary {
 	private static Dictionary<string, string> _commandDic = new Dictionary<string, string>//日志字段字典
 	{
 		//handleNo,id,judgeKey,judgeKey.ToUpper()
-		//每个属性不能同一handleNo出现两次
+		//任意一人,id固定为空
+		{ "anybuff", "26,,1;30,,1" },//"任意实体"被附加或移除状态
+		{ "anybuffadd", "26,,1" },//"任意实体"被附加状态
+		{ "anybuffremove", "30,,1" },//"任意实体"被移除状态
+		{ "anyskill", "21,,3;22,,3" },//"任意实体"释放技能
+		{ "anyjob", "03,,2" },//"任意实体"切换为某职业
+		//自己,id为日志行中对应字段
 		{ "area", "40,,2" },//如"九号解决方案"
 		{ "areasub", "40,,3" },
 		{ "buff", "26,5,1;30,5,1" },//"自己"被附加或移除状态
 		{ "buffadd", "26,5,1" },//"自己"被附加状态
 		{ "buffremove", "30,5,1" },//"自己"被移除状态
 		{ "hp", "03,0,9,10;04,0,9,10;21,0,32,33;24,0,5,6;39,0,2,3" },
-		{ "job", "03,0,2" },
+		{ "job", "03,0,2" },//"自己"切换为某职业
 		{ "mp", "03,0,11,12;04,0,11,12;21,0,34,35;24,0,7,8;39,0,4,5" },
 		{ "skill", "21,0,3;22,0,3" },//"自己"释放技能
 		{ "target", "21,0,5" }//被自己使用了技能的目标
@@ -825,12 +855,16 @@ public static class AuraCanSocket {
 	static WebSocket ws;
 	public static void SendToVTubeStudio(string payload)
 	{
-		if (ws.ReadyState != WebSocketState.Open) {
+		if (ws == null || ws.ReadyState != WebSocketState.Open) {
 			ws = null;
-			Logger.Log($"WebSocket 连接未开启。");
+			AuraCanVTS.DestoryHandles();//handles清空能解决大多数问题
+			Logger.Log($"WebSocket 连接未开启,初始化_handles");
 		}
-		Logger.Log3("send:" + payload);
-		ws.Send(payload);
+		else
+		{
+			Logger.Log3("send:" + payload);
+			ws.Send(payload);
+		}
 	}
 	// 插件连接
 	public static void InitSocket() {
