@@ -1,13 +1,14 @@
-using WebSocketSharp;
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.RegularExpressions;
+using System.Threading;
 using System.Windows.Forms;
 using Triggernometry;
 using Triggernometry.Variables;
-using System.Text.RegularExpressions;
+using WebSocketSharp;
 using static Triggernometry.Interpreter;
-using System.Collections.Generic;
-using System;
-using System.Linq;
-using System.Threading;
 
 public const string wsUrl = "ws://127.0.0.1:8001"; // API地址
 public const string pluginName = "AuraCanVTS"; // 插件名称，同时也是日志关键词
@@ -17,7 +18,8 @@ AuraCanVTS.Init("abcde");
 
 public static class AuraCanVTS {
 	private static Schedular _schedular;//定时任务
-	private static Dictionary<string, Handle> _handles;//日志行处理器列表
+	private static Dictionary<string, Handle> _handles;//玩家日志行处理器列表
+	private static Dictionary<string, Handle> _anyHandles;//任意实体日志行处理器列表
 	private static VariableDictionary _dv;//持久变量
 	private static string _playerId;//当前玩家Id
 
@@ -72,11 +74,23 @@ public static class AuraCanVTS {
 					break; //无匹配
 			}
 		}
-		else if(_handles.ContainsKey(handleNo))//其他日志处理(非默语)
+		else
 		{
-			logString = logString.Substring(37);
-			string[] log = logString.Split('|');
-			_handles[handleNo].HandleProcess(_playerId, log);
+			bool playerFlag = _handles.ContainsKey(handleNo);
+			bool anyFlag = _anyHandles.ContainsKey(handleNo);
+			if(playerFlag || anyFlag)
+			{
+				logString = logString.Substring(37);
+				string[] log = logString.Split('|');
+				if(playerFlag)
+				{
+					_handles[handleNo].HandleProcess(_playerId, log);
+				}
+				if(anyFlag)
+				{
+					_anyHandles[handleNo].HandleProcess(_playerId, log);
+				}
+			}
 		}
 		if(handleNo == "02")//更新当前玩家的名称和ID(可能会有更换模型的动作,因此不作为elseif)
 		{
@@ -86,10 +100,11 @@ public static class AuraCanVTS {
 		}
 	}
 
-	//把_handles重新初始化就不会再发请求了
-	public static void DestoryHandles()
+	//初始化Handles
+	public static void InitHandles()
 	{
 		_handles = new Dictionary<string, Handle>();
+		_anyHandles = new Dictionary<string, Handle>();
 	}
 
 	public static void Init(string steps)
@@ -97,7 +112,7 @@ public static class AuraCanVTS {
 		//初始化类
 		if(steps.Contains("a"))
 		{
-			_handles = new Dictionary<string, Handle>();//key为10进制
+			InitHandles();//初始化Handles
 			string logLevel = StaticHelpers.GetScalarVariable(true, $"{pluginName}LogLevel") ?? "0";//日志级别,默认0
 			Logger.SetLogger(logLevel);
 			_playerId = StaticHelpers.GetScalarVariable(true, $"{pluginName}PlayerId") ?? "";
@@ -346,7 +361,7 @@ public static class AuraCanVTS {
 				vts change log level -3
 				vts log -3
 		*/
-		match = Regex.Match(commandStr, @"^vts(?:\s+change)?\s+log(?:\s+level)?\s+([\-\d]+)$");
+		match = Regex.Match(commandStr, @"^vts(?:\s+change)?\s+log(?:\s+level)?\s+(\d+)$");
 		if(match.Success)
 		{
 			string level = match.Groups[1].Value;//日志级别
@@ -441,7 +456,7 @@ public static class AuraCanVTS {
 			{
 				if(!_handles.ContainsKey(handleNo))
 				{
-					_handles[handleNo] = new Handle(handleNo);
+					_handles[handleNo] = new Handle(handleNo, false); //mp与Hp都不支持所有人
 				}
 				lock(_handles[handleNo])
 				{
@@ -502,17 +517,19 @@ public static class AuraCanVTS {
 				val = AuraCanDictionary.GetJobIdByJobName((string)val);
 			}
 			Judge judge = new Judge(executer, i, judgeKey, method, val);
+			bool anyFlag = judgeKey.StartsWith("any");
+			Dictionary<string, Handle> tempHandles = anyFlag ? _anyHandles : _handles;
 			foreach(string handleNo in AuraCanDictionary.GetHandleNosByJudgeKey(judgeKey))
 			{
-				lock(_handles)
+				lock(tempHandles)
 				{
-					if(!_handles.ContainsKey(handleNo))
+					if(!tempHandles.ContainsKey(handleNo))
 					{
-						_handles[handleNo] = new Handle(handleNo);
+						tempHandles[handleNo] = new Handle(handleNo, anyFlag);
 					}
-					lock(_handles[handleNo])
+					lock(tempHandles[handleNo])
 					{
-						_handles[handleNo].AddJudge(judge);
+						tempHandles[handleNo].AddJudge(judge);
 					}
 				}
 			}
@@ -622,7 +639,10 @@ public static class AuraCanDictionary {
 	}
 	public static int GetIdIndexByHandleNo(string handleNo)
 	{
-		foreach(string commandInfo in _commandDic.Values)
+		var commandDicValues = _commandDic
+			.Where(kv => !kv.Key.StartsWith("any"))
+			.Select(kv => kv.Value);
+		foreach(string commandInfo in commandDicValues)
 		{
 			string[] handles = commandInfo.Split(';');
 			foreach(string handle in handles)
@@ -663,13 +683,13 @@ public class Handle
 {
 	private List<Judge> _judges; //不同实体的判断列表
 	private Dictionary<string, int> _parsIndex; //参数,位于日志中第几个
-	private int _idIndex;//日志中第几个字段是实体的名字
-	private string _handleNo;//日志行序号
-	public Handle(string handleNo)
+	private int _idIndex; //日志中第几个字段是实体的名字
+	private string _handleNo; //日志行序号
+	public Handle(string handleNo, bool anyFlag) //anyFlag表示非玩家自己的信息也被判定
 	{
 		_judges = new List<Judge>();
 		_parsIndex = AuraCanDictionary.GetParsIndexByHandleNo(handleNo);
-		_idIndex = AuraCanDictionary.GetIdIndexByHandleNo(handleNo);
+		_idIndex = anyFlag ? -1 : AuraCanDictionary.GetIdIndexByHandleNo(handleNo);
 		_handleNo = handleNo;
 	}
 	public void AddJudge(Judge judge) => _judges.Add(judge);
@@ -857,7 +877,7 @@ public static class AuraCanSocket {
 	{
 		if (ws == null || ws.ReadyState != WebSocketState.Open) {
 			ws = null;
-			AuraCanVTS.DestoryHandles();//handles清空能解决大多数问题
+			AuraCanVTS.InitHandles();//handles清空能解决大多数问题
 			Logger.Log($"WebSocket 连接未开启,初始化_handles");
 		}
 		else
@@ -975,35 +995,27 @@ public static class Logger
 	public static void Log(string msg) => _logger.Log($"{pluginName} {msg}");
 	public static void Log2(string msg) => _logger2.Log($"{pluginName} {msg}");
 	public static void Log3(string msg) => _logger3.Log($"{pluginName} {msg}");
-	private static PostNamazuLogger _postNamazuLogger = new PostNamazuLogger();//鲶鱼精
-	private static TextAuraLogger _textAuraLogger = new TextAuraLogger();//文本悬浮窗
+	private static NoneLogger _noneLogger = new NoneLogger();//啥也不干
 	private static TriggernometryLogger _triggernometryLogger = new TriggernometryLogger();//用户日志1
 	private static TriggernometryLogger2 _triggernometryLogger2 = new TriggernometryLogger2();//用户日志2
-	private static NoneLogger _noneLogger = new NoneLogger();//啥也不干
-	private static readonly Dictionary<string, (ILogger logger, ILogger logger2, ILogger logger3)> loggers = new()
+	private static TextAuraLogger _textAuraLogger = new TextAuraLogger();//文本悬浮窗
+	private static PostNamazuLogger _postNamazuLogger = new PostNamazuLogger();//鲶鱼精
+	private static readonly Dictionary<string, ILogger> loggers = new()
 	{
-		["-3"] = (_postNamazuLogger, _postNamazuLogger, _triggernometryLogger2), //鲶鱼精邮差+鲶鱼精邮差+用户日志2
-		["-2"] = (_postNamazuLogger, _triggernometryLogger, _triggernometryLogger2), //鲶鱼精邮差+用户日志1+用户日志2
-		["-1"] = (_postNamazuLogger, _triggernometryLogger, _noneLogger), //鲶鱼精邮差+用户日志1+啥也不干
-		["0"] = (_noneLogger, _noneLogger, _noneLogger), //完全不打印日志
-		["1"] = (_triggernometryLogger, _noneLogger, _noneLogger), //用户日志1+啥也不干+啥也不干
-		["2"] = (_triggernometryLogger, _triggernometryLogger2, _noneLogger), //用户日志1+用户日志2+啥也不干
-		["3"] = (_triggernometryLogger, _triggernometryLogger, _triggernometryLogger2), //用户日志1+用户日志1+用户日志2
-		//文本悬浮窗有问题["4"] = (_textAuraLogger, _textAuraLogger, _textAuraLogger), //文本悬浮窗+文本悬浮窗+文本悬浮窗
+		["0"] = _noneLogger, // 啥也不干
+		["1"] = _triggernometryLogger, // 用户日志1
+		["2"] = _triggernometryLogger2, // 用户日志2
+		["3"] = _textAuraLogger, // 文本悬浮窗
+		["9"] = _postNamazuLogger // 鲶鱼精邮差
 	};
 	public static void SetLogger(string level)//数字绝对值越大日志越多,负数区间分给鲶鱼精邮差
 	{
+		_textAuraLogger.Destroy(); // 清空一下
 		StaticHelpers.SetScalarVariable(true, $"{pluginName}LogLevel", level);
-		if(loggers.TryGetValue(level, out var loggerPair))
-		{
-			_logger = loggerPair.logger;
-			_logger2 = loggerPair.logger2;
-			_logger3 = loggerPair.logger3;
-		}
-		else
-		{
-			Log($"日志级别{level}不存在,日志打印方式保持原样");
-		}
+		level = level.PadRight(3, '0');
+		_logger = loggers[level[0].ToString()];
+		_logger2 = loggers[level[1].ToString()];
+		_logger3 = loggers[level[2].ToString()];
 	}
 }
 public interface ILogger
@@ -1022,14 +1034,17 @@ public class TriggernometryLogger2 : ILogger//日志行(高级触发器用户2�
 {
 	public void Log(string msg) => StaticHelpers.Log(RealPlugin.DebugLevelEnum.Custom2, msg);
 }
-public class TextAuraLogger : ILogger//文本悬浮窗(目前有问题)
+public class TextAuraLogger : ILogger//文本悬浮窗
 {
 	private static Triggernometry.Action _logAuraAction;
+	private static Triggernometry.Context _ctx;
+	private static Triggernometry.Trigger _trig;
+	private static ConcurrentQueue<string> _msgQueue;
 	public TextAuraLogger()
 	{
 		_logAuraAction = new Triggernometry.Action();
 		_logAuraAction.ActionType = Triggernometry.Action.ActionTypeEnum.TextAura.ToString();
-		_logAuraAction.AuraOp = Triggernometry.Action.AuraOpEnum.DeactivateAura.ToString();
+		_logAuraAction.AuraOp = Triggernometry.Action.AuraOpEnum.ActivateAura.ToString();
 		_logAuraAction.TextAuraName = pluginName;
 		_logAuraAction.TextAuraAlignment = "TopLeft";
 		_logAuraAction.TextAuraFontSize = "15";
@@ -1041,11 +1056,25 @@ public class TextAuraLogger : ILogger//文本悬浮窗(目前有问题)
 		_logAuraAction.TextAuraFontName = "Microsoft YaHei";
 		_logAuraAction.TextAuraOutline = "#0080FF";
 		_logAuraAction.TextAuraForeground = "White";
+		_ctx = new Context();
+		_trig = new Trigger();
+		_trig.Name = pluginName;
+		_msgQueue = new ConcurrentQueue<string>();
 	}
-	public void Log(string msg) {
-		_logAuraAction.TextAuraExpression = msg;
-		Context ctx = new Context();
-		Triggernometry.RealPlugin.plug.QueueAction(ctx, ctx.trig, null, _logAuraAction, System.DateTime.Now, true);
+	public void Log(string msg)
+	{
+		_msgQueue.Enqueue(msg);
+		if (_msgQueue.Count > 30)
+		{
+			_msgQueue.TryDequeue(out string _);
+		}
+		_logAuraAction.TextAuraExpression = string.Join("\n", _msgQueue);
+		Triggernometry.RealPlugin.plug.QueueAction(_ctx, _trig, null, _logAuraAction, System.DateTime.Now, false);
+	}
+	public void Destroy()
+	{
+		_logAuraAction.TextAuraExpression = "";
+		Triggernometry.RealPlugin.plug.QueueAction(_ctx, _trig, null, _logAuraAction, System.DateTime.Now, false);
 	}
 }
 public class PostNamazuLogger : ILogger//鲶鱼精邮差
