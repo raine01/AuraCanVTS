@@ -389,7 +389,7 @@ public static class AuraCanVTS {
 	//存入持久化变量
 	private static void VtsSaveCommand(string shortCommandStr)
 	{
-		int dvKey = _dv.Values.Count();
+		int dvKey = _dv.Values.Count() + 1;
 		while(_dv.ContainsKey(dvKey.ToString()))
 		{
 			dvKey++;
@@ -429,10 +429,10 @@ public static class AuraCanVTS {
 		string allCommands = "";
 		for (int i = 0; i < intKeys.Length; i++)
 		{
-			string key = i.ToString();
+			string key = (i + 1).ToString();
 			string val = _dv.GetValue(intKeys[i].ToString()).ToString();
 			newDv.Add(key, val);
-			allCommands += $"{key}{val}\n";
+			allCommands += $"{key}→{val}\n";
 		}
 		if(intKeys.Length > 0)
 		{
@@ -1079,6 +1079,7 @@ public class TextAuraLogger : ILogger//文本悬浮窗
 	}
 	public void Destroy()
 	{
+		_msgQueue = new ConcurrentQueue<string>();
 		_logAuraAction.TextAuraExpression = "";
 		Triggernometry.RealPlugin.plug.QueueAction(_ctx, _trig, null, _logAuraAction, System.DateTime.Now, false);
 	}
