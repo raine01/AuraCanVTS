@@ -12,7 +12,8 @@ using static Triggernometry.Interpreter;
 
 public const string wsUrl = "ws://127.0.0.1:8001"; // API地址
 public const string pluginName = "AuraCanVTS"; // 插件名称，同时也是日志关键词
-public const string developer = "WhisperSongs"; // 插件作者
+public const string version = "2.0.3"; // 插件版本
+public const string developer = "纤凌依 & MnFeN"; // 作者
 // 插件图标 pluginIcon
 AuraCanVTS.Init("abcde");
 
@@ -54,8 +55,8 @@ public static class AuraCanVTS {
 				case CommandTypeEnum.executecommand://执行指令
 					AuraCanSocket.SendToVTubeStudio(new Message(parameters).Serialize());
 					break;
-				case CommandTypeEnum.createcommand://创建指令
-					VtsCreateCommand(shortCommandStr, parameters);
+				case CommandTypeEnum.createcommand://保存指令
+					VtsSaveCommand(shortCommandStr);
 					break;
 				case CommandTypeEnum.deletecommand://删除指令
 					VtsDeleteCommand(parameters);
@@ -70,7 +71,7 @@ public static class AuraCanVTS {
 					Logger.SetLogger((string)parameters["level"]);
 					break;
 				case CommandTypeEnum.donothing:
-					Logger.Log("啥也不干");
+					Logger.Log("do nothing");
 					break; //无匹配
 			}
 		}
@@ -113,22 +114,22 @@ public static class AuraCanVTS {
 		if(steps.Contains("a"))
 		{
 			InitHandles();//初始化Handles
-			string logLevel = StaticHelpers.GetScalarVariable(true, $"{pluginName}LogLevel") ?? "0";//日志级别,默认0
+			string logLevel = StaticHelpers.GetScalarVariable(true, $"{pluginName}LogLevel") ?? "312";//日志级别,默认312
 			Logger.SetLogger(logLevel);
-			_playerId = StaticHelpers.GetScalarVariable(true, $"{pluginName}PlayerId") ?? "";
-			Logger.Log2($"init a finished,playerId is {_playerId}");
+			_playerId = StaticHelpers.GetScalarVariable(true, $"{pluginName}PlayerId") ?? "unknow";
+			Logger.Log2($"[A]init handles finished,loglevel {logLevel},playerId {_playerId}");
 		}
 		//初始化websocket链接
 		if(steps.Contains("b"))
 		{
 			AuraCanSocket.InitSocket();
-			Logger.Log2($"init b finished");
+			Logger.Log2($"[B]init websocket finished");
 		}
 		//初始化定时器
 		if(steps.Contains("c"))
 		{
 			_schedular = new Schedular();
-			Logger.Log2($"init c finished");
+			Logger.Log2($"[C]init schedular finished");
 		}
 		//字符串还原回方法
 		if(steps.Contains("d"))
@@ -154,12 +155,10 @@ public static class AuraCanVTS {
 					{
 						Logger.Log2($"init command:{commandStr}");
 						CheckCommand(commandStr, out _, out _,out Dictionary<string, object> parameters);
-						VtsCreateCommand("", parameters);
 					}
 				}
-				Logger.Log2($"rebuild {_dv.Size} command(s)");
 			}
-			Logger.Log2($"init d finished");
+			Logger.Log2($"[D]init commands and schedulars finished,rebuild {_dv.Size} command(s)");
 		}
 		//注册回调函数
 		if(steps.Contains("e"))
@@ -169,9 +168,9 @@ public static class AuraCanVTS {
 			RealPlugin.plug.RegisterNamedCallback($"{pluginName}StopSender", (object _, string command) => Sender("stop", command), null);
 			RealPlugin.plug.RegisterNamedCallback($"{pluginName}PressSender", (object _, string command) => Sender("press", command), null);
 			RealPlugin.plug.RegisterNamedCallback($"{pluginName}JsonSender", (object _, string json) => AuraCanSocket.SendToVTubeStudio(json), null);//究极摆烂
-			Logger.Log2($"init e finished");
+			Logger.Log2($"[E]init callback functions finished");
 		}
-		Logger.Log2($"init finished");
+		Logger.Log2($"init plugin finished");
 	}
 
 	private static CommandTypeEnum CheckCommand(string commandStr, out string longCommandStr, out string shortCommandStr, out Dictionary<string, object> parameters)
@@ -180,7 +179,8 @@ public static class AuraCanVTS {
 		parameters = new Dictionary<string, object>();
 		/*
 			CommandTypeEnum.createparameter:
-				Parameter names have to be unique, alphanumeric (no spaces allowed) and have to be between 4 and 32 characters in length.
+				Adding new tracking parameters ("custom parameters").Parameter names have to be unique, alphanumeric (no spaces allowed) and have to be between 4 and 32 characters in length.
+				添加新的跟踪参数（“自定义参数”）。参数名称必须是唯一的字母数字（不允许有空格），长度必须在4到32个字符之间。
 			eg:
 				vts create new parameter ParamBodyAngleX with maximum value 20, minimum value 10, default value 15, and notes that the parameter is optional
 				vts create new parameter ParamBodyAngleX with maximum value 20, minimum value 10, default value 15
@@ -223,7 +223,8 @@ public static class AuraCanVTS {
 
 		/*
 			CommandTypeEnum.deleteparameter:
-				Parameter names have to be unique, alphanumeric (no spaces allowed) and have to be between 4 and 32 characters in length.
+				Delete custom parameters.Parameter names have to be unique, alphanumeric (no spaces allowed) and have to be between 4 and 32 characters in length.
+				删除自定义参数。参数名称必须是唯一的字母数字（不允许有空格），长度必须在4到32个字符之间。
 			eg:
 				vts delete parameter ParamBodyAngleX
 				vts del ParamBodyAngleX
@@ -242,6 +243,7 @@ public static class AuraCanVTS {
 		/*
 			CommandTypeEnum.createcommand:
 				You can trigger hotkeys either by their unique ID or the hotkey name (case-insensitive). 
+				您可以通过热键的唯一ID或热键名称（不区分大小写）触发热键。
 			eg:
 				vts create new command that press cl when hp<90 and area=九号解决方案
 				vts press cl when hp<90 and area=九号解决方案
@@ -273,6 +275,7 @@ public static class AuraCanVTS {
 
 		/*
 			CommandTypeEnum.deletecommand:
+				Delete commands, including comands and schedulars, with parameters ranging from 0 to 999 Plugin variables have a minimum of four characters, so there is no conflict.
 				删命令,包括定时器和指令,参数是0~999的数字.插件变量最少四位字符,所以不冲突
 			eg:
 				vts delete command 1
@@ -294,6 +297,7 @@ public static class AuraCanVTS {
 
 		/*
 			CommandTypeEnum.showcommand:
+				List all commands, including commands and schedluas
 				列出所有的命令,包括指令与定时器
 			eg:
 				vts show all commands
@@ -309,7 +313,8 @@ public static class AuraCanVTS {
 
 		/*
 			CommandTypeEnum.executecommand:
-				直接执行指令,仅包括press/start/stop
+				Directly execute instructions, including only press/start/stop
+				直接执行指令，仅包括press/start/stop
 			eg:
 				vts execute command that press cl
 				vts press cl
@@ -328,7 +333,8 @@ public static class AuraCanVTS {
 
 		/*
 			CommandTypeEnum.schedular:
-				给定时器的字典添加一个值,根据日志行更新,每秒发送一次
+				Add a value to the timer dictionary, update it according to the log line, and send it once per second
+				给定时器的字典添加一个值，根据日志行更新，每秒发送一次
 			eg:
 				vts update schedular that set ParamBodyAngleX by hp
 				vts set ParamBodyAngleX hp
@@ -351,20 +357,23 @@ public static class AuraCanVTS {
 
 		/*
 			CommandTypeEnum.changeLog:
-				改变日志级别.0为默认,负数为鲶鱼精邮差相关的输出方式
-				数字的绝对值越大,打印的日志越多,详见Logger类
+				改变日志级别，参数为一个1~3位的数字。第一位控制主要日志，第二位控制次要日志，第三位控制多数时候不用在乎的日志。参数不够三位时会在右侧补0，详见Logger类
+				0：什么也不打印
+				1：触发器日志-用户1
+				2：触发器日志-用户2
+				3：文本悬浮窗
+				9：输出内容至聊天框（需要配合ACT插件鲶鱼精邮差）
+				不知道设置成什么样子可以保持默认（312），这会将主要日志打印在聊天框，次要日志打印在触发器日志-用户1分类，不重要的日志打印在触发器日志-用户2分类
 			eg:
-				vts change log level 0
-				vts log 0
-				vts change log level 1
-				vts log 1
-				vts change log level -3
-				vts log -3
+				vts change log level 312
+				vts log 312
+				vts change log level 3
+				vts log 3
 		*/
-		match = Regex.Match(commandStr, @"^vts(?:\s+change)?\s+log(?:\s+level)?\s+(\d+)$");
+		match = Regex.Match(commandStr, @"^vts(?:\s+change)?\s+log(?:\s+level)?\s+(\d{1,3})$");
 		if(match.Success)
 		{
-			string level = match.Groups[1].Value;//日志级别
+			string level = match.Groups[1].Value;
 			parameters["level"] = level;
 			longCommandStr = $"vts change log level {level}";
 			shortCommandStr = $"vts log {level}";
@@ -377,21 +386,15 @@ public static class AuraCanVTS {
 		return CommandTypeEnum.donothing;
 	}
 
-	private static void VtsCreateCommand(string shortCommandStr, Dictionary<string, object> parameters)
+	//存入持久化变量
+	private static void VtsSaveCommand(string shortCommandStr)
 	{
-		//创建command对象
-		Judge[] judges = (Judge[])parameters["judges"];
-		parameters.Remove("judges");
-		//存入持久化变量
-		if(shortCommandStr != "")//初始化时也会调用这个方法,那时该参数为空字符串
+		int dvKey = _dv.Values.Count();
+		while(_dv.ContainsKey(dvKey.ToString()))
 		{
-			int dvKey = _dv.Values.Count();
-			while(_dv.ContainsKey(dvKey.ToString()))
-			{
-				dvKey++;
-			}
-			_dv.SetValue(dvKey.ToString(), shortCommandStr);
+			dvKey++;
 		}
+		_dv.SetValue(dvKey.ToString(), shortCommandStr);
 	}
 
 	private static void VtsDeleteCommand(Dictionary<string, object> parameters)
@@ -412,6 +415,7 @@ public static class AuraCanVTS {
 		Init("acd");
 	}
 
+	//列出所有指令与定时器,同时压缩指令序号
 	private static void VtsShowCommand()
 	{
 		string[] stringKeys = _dv.Values.Keys.ToArray();
@@ -442,6 +446,7 @@ public static class AuraCanVTS {
 		StaticHelpers.SetDictVariable(true, pluginName, _dv);
 	}
 
+	//创建定时器
 	private static void VtsCreateSchedular(string shortCommandStr, Dictionary<string, object> parameters)
 	{
 		//先搓一个judge
@@ -464,19 +469,12 @@ public static class AuraCanVTS {
 				}
 			}
 		}
-		//存入持久化变量
-		if(shortCommandStr != "")//初始化时也会调用这个方法,那时该参数为空字符串
-		{
-			int dvKey = _dv.Values.Count();
-			while(_dv.ContainsKey(dvKey.ToString()))
-			{
-				dvKey++;
-			}
-			_dv.SetValue(dvKey.ToString(), shortCommandStr);
-		}
+		//指令持久化
+		VtsSaveCommand(shortCommandStr);
 	}
 
-	//true表示没问题,out格式化后的;false表示有问题,out异常提示
+	//检测指令的判断条件是否合理,同时创建executer(执行器)与judges(判断器)
+	//true表示检测通过,out格式化后的短指令与判断器列表;false表示有问题,out异常提示
 	private static bool CheckCondition(string conditionStr, string payload, out string prepareConditionStr, out Judge[] judges)
 	{
 		// todo 得检查下有没有这个参数
@@ -538,6 +536,7 @@ public static class AuraCanVTS {
 		return true;
 	}
 
+	//将指令处理为参数,仅press/start/stop
 	private static Dictionary<string, object> CheckCmd(string type, string command)
 	{
 		string longCmdStr = "";
@@ -575,7 +574,7 @@ public static class AuraCanVTS {
 }
 
 public static class AuraCanDictionary {
-	private static Dictionary<string, string> _jobDic = new List<string>//职业字典
+	private static Dictionary<string, string> _jobDic = new List<string>//职业字典(key为职业名,value为十六进制职业id)
 	{
 		//逗号分割,第一个值为日志中的id,其余的值为可供输入的选项
 		//防护职业
@@ -637,6 +636,7 @@ public static class AuraCanDictionary {
 		}
 		return noList.ToArray();
 	}
+	//通过handleNo获取实体字段为哪一列(排除any开头的字段,因为它们没有实体字段)
 	public static int GetIdIndexByHandleNo(string handleNo)
 	{
 		var commandDicValues = _commandDic
@@ -656,6 +656,7 @@ public static class AuraCanDictionary {
 		}
 		return -1;//-1表示日志无实体字段
 	}
+	//以judgeKey-index字典的形式返回对应日志行中哪几列数据有用
 	public static Dictionary<string, int> GetParsIndexByHandleNo(string handleNo)
 	{
 		Dictionary<string, int> parsIndex = new Dictionary<string, int>();
@@ -683,7 +684,7 @@ public class Handle
 {
 	private List<Judge> _judges; //不同实体的判断列表
 	private Dictionary<string, int> _parsIndex; //参数,位于日志中第几个
-	private int _idIndex; //日志中第几个字段是实体的名字
+	private int _idIndex; //日志中第几个字段是实体的名字,-1表示任意实体
 	private string _handleNo; //日志行序号
 	public Handle(string handleNo, bool anyFlag) //anyFlag表示非玩家自己的信息也被判定
 	{
@@ -766,22 +767,19 @@ public class Judge
 			case JudgeMethodEnum.alltrue://更新定时器用的
 				Schedular.UpdateValue($"{_strVal}", double.Parse(pars[_key]));
 				break;
-			case JudgeMethodEnum.alltruep://更新定时器用的%(范围为0~1)
+			case JudgeMethodEnum.alltruep://更新定时器%用的(范围为0~1)
 				Schedular.UpdateValue($"{_strVal}", double.Parse(pars[_key]) / double.Parse(pars[_key.ToUpper()]));
-				break;
-			default:
-				throw new Exception($"钝口螈!有活力的钝口螈!");
 				break;
 		}
 	}
 }
 
-public class Schedular //定时器
+public class Schedular // 定时器
 {
 	private static System.Threading.Timer _timer;
 	private static Dictionary<string, object> _setValDic;//key为自定义参数,value的格式为double
 	private static int _count;//每秒一次日志太频繁了,加个计数器
-	private static bool _sendFlag = false;//有额外发送则将值设为true,防止单周期发送大于2次
+	private static bool _sendFlag = false;//有额外发送则将值设为true,防止单周期发送超过2次
 	public Schedular()
 	{
 		StaticHelpers.Storage.TryGetValue($"{pluginName}Timer", out object timerObj);
@@ -805,6 +803,7 @@ public class Schedular //定时器
 			Logger.Log2($"value {key} has changed, send immediately");
 		}
 	}
+	//定时执行的方法
 	private static void SendSetMsg(object _)
 	{
 		_sendFlag = false;
@@ -835,7 +834,7 @@ public class Schedular //定时器
 	}
 }
 
-public class Executer
+public class Executer // 执行器
 {
 	private bool[] _flags;
 	private string _payload;
@@ -857,7 +856,7 @@ public class Executer
 	}
 }
 
-public class Message {
+public class Message { // 消息体
 	public string apiName { get; set; } = "VTubeStudioPublicAPI";
 	public string apiVersion { get; set; } = "1.0";
 	public string messageType { get; set; }
@@ -871,8 +870,9 @@ public class Message {
 }
 
 
-public static class AuraCanSocket {
+public static class AuraCanSocket { // Socket工具
 	static WebSocket ws;
+	// 发送消息
 	public static void SendToVTubeStudio(string payload)
 	{
 		if (ws == null || ws.ReadyState != WebSocketState.Open) {
@@ -906,6 +906,7 @@ public static class AuraCanSocket {
 			Authenticate();
 		}
 	}
+	// 认证
 	private static void Authenticate() {
 		string token = StaticHelpers.GetScalarVariable(true, $"{pluginName}Token") ?? "";
 		MessageTypeEnum type;
@@ -917,12 +918,13 @@ public static class AuraCanSocket {
 			type = MessageTypeEnum.AuthenticationRequest;
 			parameters["authenticationToken"] = token;
 		}
-		parameters["pluginName"] = pluginName;
+		parameters["pluginName"] = pluginName + " " + version;
 		parameters["pluginDeveloper"] = developer;
 		parameters["type"] = type;
 		string payload = new Message(parameters).Serialize();
 		SendToVTubeStudio(payload);
 	}
+	// 收到消息时执行的方法
 	private static void ProcessReceivedMessage(string json) {
 		Logger.Log3($"receive:{json}");
 		if (json.Contains("errorID")) {
@@ -945,12 +947,13 @@ public static class AuraCanSocket {
 			}
 		}
 	}
+	// 获取json每个字段的值
 	private static string GetValueFromJson(string jsonString, string key) {
 		return new Regex("\"" + key + "\":\"?([^\",}]*)").Match(jsonString).Groups[1].Value;
 	}
 }
 
-public enum CommandTypeEnum
+public enum CommandTypeEnum // AuraCanVTS命令
 {
 	createparameter, //创建参数
 	deleteparameter, //删除参数
@@ -964,7 +967,7 @@ public enum CommandTypeEnum
 	//通过回调直接触发不使用枚举
 }
 
-public enum MessageTypeEnum {
+public enum MessageTypeEnum { // VTube Studio命令
 	AuthenticationRequest, //身份验证1
 	AuthenticationTokenRequest, //身份验证2
 	ParameterCreationRequest, //添加新的自定义参数
@@ -974,7 +977,7 @@ public enum MessageTypeEnum {
 	ExpressionActivationRequest //请求激活/停用表达式
 }
 
-public enum JudgeMethodEnum
+public enum JudgeMethodEnum // 指令中可用的比较方法
 {
 	gt, //>
 	lt, //<
@@ -992,9 +995,9 @@ public static class Logger
 	private static ILogger _logger;//重要信息(例如报错和关键提示信息)
 	private static ILogger _logger2;//不太重要的信息(例如非关键提示信息)
 	private static ILogger _logger3;//完全不重要的信息(发送的和接收的)
-	public static void Log(string msg) => _logger.Log($"{pluginName} {msg}");
-	public static void Log2(string msg) => _logger2.Log($"{pluginName} {msg}");
-	public static void Log3(string msg) => _logger3.Log($"{pluginName} {msg}");
+	public static void Log(string msg) => _logger.Log($"{pluginName}{version} {msg}");
+	public static void Log2(string msg) => _logger2.Log($"{pluginName}{version} {msg}");
+	public static void Log3(string msg) => _logger3.Log($"{pluginName}{version} {msg}");
 	private static NoneLogger _noneLogger = new NoneLogger();//啥也不干
 	private static TriggernometryLogger _triggernometryLogger = new TriggernometryLogger();//用户日志1
 	private static TriggernometryLogger2 _triggernometryLogger2 = new TriggernometryLogger2();//用户日志2
