@@ -470,7 +470,10 @@ public static class AuraCanVTS {
 			}
 		}
 		//指令持久化
-		VtsSaveCommand(shortCommandStr);
+		if(shortCommandStr != "")
+		{
+			VtsSaveCommand(shortCommandStr);
+		}
 	}
 
 	//检测指令的判断条件是否合理,同时创建executer(执行器)与judges(判断器)
