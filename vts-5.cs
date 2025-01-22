@@ -409,7 +409,7 @@ public static class AuraCanVTS {
 			string[] commandIndexArray = commandIndexString.Split(',');
 			foreach(string commandIndex in commandIndexArray)
 			{
-			    _dv.RemoveKey(commandIndex, pluginName);
+				_dv.RemoveKey(commandIndex, pluginName);
 			}
 		}
 		Init("acd");
@@ -577,7 +577,8 @@ public static class AuraCanVTS {
 }
 
 public static class AuraCanDictionary {
-	private static Dictionary<string, string> _jobDic = new List<string>//职业字典(key为职业名,value为十六进制职业id)
+	//职业字典(key为职业名,value为十六进制职业id)
+	private static Dictionary<string, string> _jobDic = new List<string>
 	{
 		//逗号分割,第一个值为日志中的id,其余的值为可供输入的选项
 		//防护职业
@@ -607,7 +608,8 @@ public static class AuraCanDictionary {
 	{
 		return _jobDic[jobName] == null ? jobName : _jobDic[jobName];
 	}
-	private static Dictionary<string, string> _commandDic = new Dictionary<string, string>//日志字段字典
+	//日志字段字典
+	private static Dictionary<string, string> _commandDic = new Dictionary<string, string>
 	{
 		//handleNo,id,judgeKey,judgeKey.ToUpper()
 		//任意一人,id固定为空
@@ -639,9 +641,9 @@ public static class AuraCanDictionary {
 		}
 		return noList.ToArray();
 	}
-	//通过handleNo获取实体字段为哪一列(排除any开头的字段,因为它们没有实体字段)
 	public static int GetIdIndexByHandleNo(string handleNo)
 	{
+		//通过handleNo获取实体字段为哪一列(排除any开头的字段,因为它们没有实体字段)
 		var commandDicValues = _commandDic
 			.Where(kv => !kv.Key.StartsWith("any"))
 			.Select(kv => kv.Value);
@@ -659,9 +661,9 @@ public static class AuraCanDictionary {
 		}
 		return -1;//-1表示日志无实体字段
 	}
-	//以judgeKey-index字典的形式返回对应日志行中哪几列数据有用
 	public static Dictionary<string, int> GetParsIndexByHandleNo(string handleNo)
 	{
+		//以judgeKey-index字典的形式返回对应日志行中哪几列数据有用
 		Dictionary<string, int> parsIndex = new Dictionary<string, int>();
 		foreach(KeyValuePair<string, string> kvp in _commandDic)
 		{
@@ -680,6 +682,253 @@ public static class AuraCanDictionary {
 			}
 		}
 		return parsIndex;
+	}
+	//职业量谱
+	private static Dictionary<string, string> _jobGaugeDic = new Dictionary<string, string>
+	{
+		//value为_jobId,_offset,_length
+		//_offset = (46 - JobGauges.cs中的16进制数FieldOffset转化为10进制 * 2)
+		//白魔法师
+		{ "百合花茎", "18,26,4" },//毫秒数0>30000
+		{ "治疗百合", "18,22,1" },//蓝花数:0,1,2,3
+		{ "血百合", "18,20,1" },//层数:0,1,2,3
+		//学者
+		{ "以太超流", "1C,30,1" },//豆子数:3,2,1,0
+		{ "异想以太", "1C,28,2" },//10,20,30...100
+		{ "炽天使", "1C,26,4" },//炽天使存在剩余时间,22000->0
+		//占星术士
+		{ "出卡3", "21,30,1" },
+		{ "小奥秘卡", "21,29,1" },
+		{ "出卡1", "21,28,1" },
+		{ "出卡2", "21,27,1" },
+		{ "下一卡组", "21,26,1" },//1灵级抽卡,2星级抽卡
+		//贤者
+		
+
+
+[StructLayout(LayoutKind.Explicit, Size = 0x10)]
+public struct SageGauge {
+    [FieldOffset(0x08)] public short AddersgallTimer;
+    [FieldOffset(0x0A)] public byte Addersgall;
+    [FieldOffset(0x0B)] public byte Addersting;
+    [FieldOffset(0x0C)] public byte Eukrasia;
+
+    public bool EukrasiaActive => Eukrasia > 0;
+}
+
+#endregion
+
+#region MagicDPS
+
+[StructLayout(LayoutKind.Explicit, Size = 0x30)]
+public struct BlackMageGauge {
+    [FieldOffset(0x08)] public short EnochianTimer;
+    [FieldOffset(0x0A)] public short ElementTimeRemaining;
+    [FieldOffset(0x0C)] public sbyte ElementStance;
+    [FieldOffset(0x0D)] public byte UmbralHearts;
+    [FieldOffset(0x0E)] public byte PolyglotStacks;
+    [FieldOffset(0x0F)] public EnochianFlags EnochianFlags;
+
+    public int UmbralStacks => ElementStance >= 0 ? 0 : ElementStance * -1;
+    public int AstralStacks => ElementStance <= 0 ? 0 : ElementStance;
+    public bool EnochianActive => EnochianFlags.HasFlag(EnochianFlags.Enochian);
+    public bool ParadoxActive => EnochianFlags.HasFlag(EnochianFlags.Paradox);
+    public int AstralSoulStacks => ((int)EnochianFlags >> 2) & 7;
+}
+
+[StructLayout(LayoutKind.Explicit, Size = 0x10)]
+public struct SummonerGauge {
+    [FieldOffset(0x8)] public ushort SummonTimer; // millis counting down
+    [FieldOffset(0xA)] public ushort AttunementTimer; // millis counting down
+    [FieldOffset(0xC)] public byte ReturnSummon; // Pet sheet (23=Carbuncle, the only option now)
+    [FieldOffset(0xD)] public byte ReturnSummonGlam; // PetMirage sheet
+    [FieldOffset(0xE)] public byte Attunement; // Count of "Attunement cost" resource
+    [FieldOffset(0xF)] public AetherFlags AetherFlags; // bitfield
+    public byte AttunementCount => (byte)(Attunement >> 2);//new in 7.01,Attunement may be Bit Field
+    public byte AttunementType => (byte)(Attunement & 0x3);//new in 7.01
+}
+
+[StructLayout(LayoutKind.Explicit, Size = 0x50)]
+public struct RedMageGauge {
+    [FieldOffset(0x08)] public byte WhiteMana;
+    [FieldOffset(0x09)] public byte BlackMana;
+    [FieldOffset(0x0A)] public byte ManaStacks;
+}
+
+[StructLayout(LayoutKind.Explicit, Size = 0x10)]
+public struct PictomancerGauge {
+    [FieldOffset(0x08)] public byte PalleteGauge;
+    [FieldOffset(0x0A)] public byte Paint;
+    [FieldOffset(0x0B)] public CanvasFlags CanvasFlags;
+    [FieldOffset(0x0C)] public CreatureFlags CreatureFlags;
+
+    public bool CreatureMotifDrawn => CanvasFlags.HasFlag(CanvasFlags.Pom) || CanvasFlags.HasFlag(CanvasFlags.Wing) || CanvasFlags.HasFlag(CanvasFlags.Claw) || CanvasFlags.HasFlag(CanvasFlags.Maw);
+    public bool WeaponMotifDrawn => CanvasFlags.HasFlag(CanvasFlags.Weapon);
+    public bool LandscapeMotifDrawn => CanvasFlags.HasFlag(CanvasFlags.Landscape);
+    public bool MooglePortraitReady => CreatureFlags.HasFlag(CreatureFlags.MooglePortait);
+    public bool MadeenPortraitReady => CreatureFlags.HasFlag(CreatureFlags.MadeenPortrait);
+}
+
+#endregion
+
+#region RangeDPS
+
+[StructLayout(LayoutKind.Explicit, Size = 0x10)]
+public struct BardGauge {
+    [FieldOffset(0x08)] public ushort SongTimer;
+    [FieldOffset(0x0C)] public byte Repertoire;
+    [FieldOffset(0x0D)] public byte SoulVoice;
+    [FieldOffset(0x0E)] public byte RadiantFinaleCoda;
+    [FieldOffset(0x0F)] public SongFlags SongFlags; // bitfield
+}
+
+[StructLayout(LayoutKind.Explicit, Size = 0x10)]
+public struct MachinistGauge {
+    [FieldOffset(0x08)] public short OverheatTimeRemaining;
+    [FieldOffset(0x0A)] public short SummonTimeRemaining;
+    [FieldOffset(0x0C)] public byte Heat;
+    [FieldOffset(0x0D)] public byte Battery;
+    [FieldOffset(0x0E)] public byte LastSummonBatteryPower;
+    [FieldOffset(0x0F)] public byte TimerActive;
+}
+
+[GenerateInterop]
+[StructLayout(LayoutKind.Explicit, Size = 0x10)]
+public unsafe partial struct DancerGauge {
+    [FieldOffset(0x08)] public byte Feathers;
+    [FieldOffset(0x09)] public byte Esprit;
+    [FieldOffset(0x0A), FixedSizeArray] internal FixedSizeArray4<byte> _danceSteps;
+    [FieldOffset(0x0E)] public byte StepIndex;
+
+    public DanceStep CurrentStep => (DanceStep)(StepIndex >= 4 ? 0 : DanceSteps[StepIndex]);
+}
+
+#endregion
+
+#region MeleeDPS
+
+[StructLayout(LayoutKind.Explicit, Size = 0x10)]
+public struct MonkGauge {
+    [FieldOffset(0x08)] public byte Chakra; // Chakra count
+    [FieldOffset(0x09)] public BeastChakraType BeastChakra1; // OpoOpoChakra = 1, RaptorChakra = 2, CoeurlChakra = 3 (only one value)
+    [FieldOffset(0x0A)] public BeastChakraType BeastChakra2; // OpoOpoChakra = 1, RaptorChakra = 2, CoeurlChakra = 3 (only one value)
+    [FieldOffset(0x0B)] public BeastChakraType BeastChakra3; // OpoOpoChakra = 1, RaptorChakra = 2, CoeurlChakra = 3 (only one value)
+    [FieldOffset(0x0C)] public byte BeastChakraStacks;
+    [FieldOffset(0x0D)] public NadiFlags Nadi; // LunarNadi = 1, SolarNadi = 2, Both = 3
+    [FieldOffset(0x0E)] public ushort BlitzTimeRemaining; // 20 seconds
+
+    public BeastChakraType[] BeastChakra => [BeastChakra1, BeastChakra2, BeastChakra3];
+
+    public int OpoOpoStacks => BeastChakraStacks & 3;
+    public int RaptorStacks => ((BeastChakraStacks >> 2) & 3);
+    public int CoeurlStacks => ((BeastChakraStacks >> 4) & 3);
+}
+
+[StructLayout(LayoutKind.Explicit, Size = 0x10)]
+public struct DragoonGauge {
+    [FieldOffset(0x08)] public short LotdTimer;
+    [FieldOffset(0x0A)] public byte LotdState; // This seems to only ever be 0 or 2 now
+    [FieldOffset(0x0B)] public byte EyeCount;
+    [FieldOffset(0x0C)] public byte FirstmindsFocusCount;
+}
+
+[StructLayout(LayoutKind.Explicit, Size = 0x10)]
+public struct NinjaGauge {
+    [FieldOffset(0x08)] public byte Ninki;
+    [FieldOffset(0x0A)] public byte Kazematoi;
+    // checked in ProcessDeferredReplaceAction for the mudras
+    // [FieldOffset(0x0C)] public byte NinjutsuStarted? FirstMudraUsed?;
+}
+
+[StructLayout(LayoutKind.Explicit, Size = 0x10)]
+public struct SamuraiGauge {
+    [FieldOffset(0x0A)] public KaeshiAction Kaeshi;
+    [FieldOffset(0x0B)] public byte Kenki;
+    [FieldOffset(0x0C)] public byte MeditationStacks;
+    [FieldOffset(0x0D)] public SenFlags SenFlags;
+}
+
+[StructLayout(LayoutKind.Explicit, Size = 0x10)]
+public struct ReaperGauge {
+    [FieldOffset(0x08)] public byte Soul;
+    [FieldOffset(0x09)] public byte Shroud;
+    [FieldOffset(0x0A)] public ushort EnshroudedTimeRemaining;
+    [FieldOffset(0x0C)] public byte LemureShroud;
+    [FieldOffset(0x0D)] public byte VoidShroud;
+}
+
+[StructLayout(LayoutKind.Explicit, Size = 0x18)]
+public struct ViperGauge {
+    [FieldOffset(0x08)] public byte RattlingCoilStacks;
+    [FieldOffset(0x09)] public byte AnguineTribute;
+    [FieldOffset(0x0A)] public byte SerpentOffering;
+    [FieldOffset(0x0B)] public DreadCombo DreadCombo;
+    [FieldOffset(0x0E)] public ushort ReawakenedTimer;
+    [FieldOffset(0x10)] public byte SerpentComboState;
+    public SerpentCombo SerpentCombo => (SerpentCombo)(SerpentComboState >> 2);
+}
+
+#endregion
+
+#region Tanks
+
+[StructLayout(LayoutKind.Explicit, Size = 0x18)]
+public struct DarkKnightGauge {
+    [FieldOffset(0x08)] public byte Blood;
+    [FieldOffset(0x09)] public byte DarkArtsState;
+    [FieldOffset(0x0A)] public ushort DarksideTimer;
+    [FieldOffset(0x0C)] public ushort ShadowTimer;
+    [FieldOffset(0x10)] public ushort DeliriumStep;
+}
+
+[StructLayout(LayoutKind.Explicit, Size = 0x10)]
+public struct PaladinGauge {
+    [FieldOffset(0x08)] public byte OathGauge;
+    [FieldOffset(0x0A)] public ushort ConfiteorComboTimer; //that only updates when you generate/spend oath
+    [FieldOffset(0x0C)] public ushort ConfiteorComboStep;
+}
+
+[StructLayout(LayoutKind.Explicit, Size = 0x10)]
+public struct WarriorGauge {
+    [FieldOffset(0x08)] public byte BeastGauge;
+}
+
+[StructLayout(LayoutKind.Explicit, Size = 0x10)]
+public struct GunbreakerGauge {
+    [FieldOffset(0x08)] public byte Ammo;
+    [FieldOffset(0x0A)] public short MaxTimerDuration;
+    [FieldOffset(0x0C)] public byte AmmoComboStep;
+}
+		
+	};
+	//职业量谱枚举值(key为枚举名,value为对应的十六进制枚举值)
+	private static Dictionary<string, string> _jobGaugeEnumDic = new List<string>
+	{
+		//逗号分割,第一个值为日志中的十六进制枚举值,其余的值为可供输入的选项
+		//占星术士
+		"00,星级抽卡,Astral","01,灵级抽卡,Umbral",//当前抽卡技能
+		"3,放浪神之箭,Arrow","1,太阳神之衡,Balance","7,王冠之领主,Lord","6,建筑神之塔,Spire",//星级卡组3176
+		"2,世界树之干,Bole","4,战争神之枪,Spear","8,王冠之贵妇,Lady","5,河流神之瓶,Ewer",//灵级卡组2485
+		//舞者
+		"1,Emboite","2,Entrechat","3,Jete","4,Pirouette",//舞步
+		//黑魔法师
+		"1,天语,Enochian","3,悖论,Paradox",//天语&悖论(实际上是位运算,2表示悖论)
+		//武士(未经确认)
+		"1,回返彼岸花,Higanbana","2,回返五剑,Goken","3,回返雪月花,Setsugekka","4,回返斩浪,Namikiri",//回返
+		//诗人
+		/*"01,贤者的叙事谣,MagesBallad","02,军神的赞美歌,ArmysPaeon","03,放浪神的小步舞曲,WanderersMinuet",//正在弹唱的战歌
+		"04,,MagesBalladLastPlayed","08,,ArmysPaeonLastPlayed","0C,,WanderersMinuetLastPlayed",//最后一次弹唱的战歌
+		"10,贤者的尾声,MagesBalladCoda","20,军神的尾声,ArmysPaeonCoda","40,放浪神的尾声,WanderersMinuetCoda",//尾声标识*/
+		"5,贤者的叙事谣,MagesBallad","A,军神的赞美歌,ArmysPaeon","F,放浪神的小步舞曲,WanderersMinuet",//正在弹唱的战歌
+
+
+	}.Select(keyValueString => keyValueString.Split(','))
+		.Select(parts => new { Value = parts[0], Keys = parts.Skip(1) })
+		.SelectMany(x => x.Keys.Select(key => new { Value = x.Value, Key = key }))
+		.ToDictionary(x => x.Key, x => x.Value);
+	public static string GetGaugeEnumByGaugeName(string gaugeName)
+	{
+		return _jobGaugeEnumDic[gaugeName];
 	}
 }
 
@@ -721,12 +970,12 @@ public class Handle
 
 public class Judge
 {
-	private Executer _executer;
-	private int _index;//Executer数组中的索引
-	private string _key;//比较参数在handle方法参数中的key
-	private JudgeMethodEnum _method;
+	protected Executer _executer;
+	protected int _index;//Executer数组中的索引
+	protected string _key;//比较参数在handle方法参数中的key
+	protected JudgeMethodEnum _method;
 	private double _numVal;
-	private string _strVal;
+	protected string _strVal;
 	public Judge(Executer executer, int index, string judgeKey, JudgeMethodEnum method, object val)
 	{
 		_executer = executer;
@@ -768,12 +1017,108 @@ public class Judge
 				_executer.CheckSaveAndSend(_index, percent < _numVal);
 				break;
 			case JudgeMethodEnum.alltrue://更新定时器用的
-				Schedular.UpdateValue($"{_strVal}", double.Parse(pars[_key]));
+				Schedular.UpdateValue(_strVal, double.Parse(pars[_key]));
 				break;
 			case JudgeMethodEnum.alltruep://更新定时器%用的(范围为0~1)
-				Schedular.UpdateValue($"{_strVal}", double.Parse(pars[_key]) / double.Parse(pars[_key.ToUpper()]));
+				Schedular.UpdateValue(_strVal, double.Parse(pars[_key]) / double.Parse(pars[_key.ToUpper()]));
 				break;
 		}
+	}
+}
+
+public class GaugeJudge : Judge//职业量谱专用
+{
+	//[data0]|[data1]|[data2]|[data3]
+	private int _offset;//_offset = (46 - JobGauges.cs中的16进制数FieldOffset转化为10进制 * 2)
+	private int _length;
+	private string _jobId;
+	public GaugeJudge(Executer executer, int index, string judgeKey, JudgeMethodEnum method, string val) : base(executer, index, "gauge", method, ProcessVal(val))
+	{
+		//用judgeKey得到_jobId/_offset/_length,val直接转成十六进制
+
+	}
+	public void JudgeProcess(Dictionary<string, string> pars)
+	{
+		switch(_method)
+		{
+			case JudgeMethodEnum.gt://>
+				_executer.CheckSaveAndSend(_index, Compare(pars) > 0);
+				break;
+			case JudgeMethodEnum.lt://<
+				_executer.CheckSaveAndSend(_index, Compare(pars) < 0);
+				break;
+			case JudgeMethodEnum.eq://=
+				_executer.CheckSaveAndSend(_index, Compare(pars) == 0);
+				break;
+			case JudgeMethodEnum.ne://!=
+				_executer.CheckSaveAndSend(_index, Compare(pars) != 0);
+				break;
+			case JudgeMethodEnum.alltrue://更新定时器用的
+				Schedular.UpdateValue(_strVal, ToDec(pars));
+				break;
+		}
+	}
+	//将值转化成对应的十六进制字符串.枚举值查表,数字转化为十六进制
+	private static string ProcessVal(string val)
+	{ 
+		string processVal;
+		if(int.TryParse(val, out int decimalNumber))
+		{
+			processVal = decimalNumber.ToString("X"); // 大写字母
+		}
+		else
+		{
+			processVal = GetGaugeEnumByGaugeName(val);
+			if(processVal == null)
+			{
+				Logger.Log($"{val} is not a number and the gauge name does not exist");
+			}
+		}
+		return processVal
+	}
+	//日志中的值大于_strVal为正,小于_strVal为负
+	private static int Compare(Dictionary<string, string> pars)
+	{
+		int startIndex = _offset - _length;
+		int dataIndex = 3 ^ startIndex >> 3, charIndex = startIndex & 7;
+		string data = pars[$"gauge{dataIndex}"];
+		int realCharIndex = data.Length - 8 + dataIndex;
+		for(int i = 0; i < _length; i++, charIndex++, realCharIndex++)
+		{
+			if(charIndex == 8)
+			{
+				dataIndex--;
+				charIndex = 0;
+				data = pars[$"gauge{dataIndex}"];
+				realCharIndex = data.Length - 8 + dataIndex;
+			}
+			char c = realCharIndex < 0 ? '0' : data[charIndex];
+			int diff = c - _strVal[i];
+			if(diff != 0) return diff;
+		}
+		return 0;
+	}
+	//日志中值的十六进制字符串转为十进制数字(用于更新定时器)
+	private static int ToDec(Dictionary<string, string> pars)
+	{
+		string hexString = "";
+		int startIndex = _offset - _length;
+		int dataIndex = 3 ^ startIndex >> 3, charIndex = startIndex & 7;
+		string data = pars[$"gauge{dataIndex}"];
+		int realCharIndex = data.Length - 8 + dataIndex;
+		for(int i = 0; i < _length; i++, charIndex++, realCharIndex++)
+		{
+			if(charIndex == 8)
+			{
+				dataIndex--;
+				charIndex = 0;
+				data = pars[$"gauge{dataIndex}"];
+				realCharIndex = data.Length - 8 + dataIndex;
+			}
+			char c = realCharIndex < 0 ? '0' : data[charIndex];
+			hexString += c;
+		}
+		return Convert.ToInt32(hexString, 16);
 	}
 }
 
